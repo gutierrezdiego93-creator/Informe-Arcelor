@@ -1,40 +1,78 @@
 "use client";
 
-// Paso 1 del wizard: seleccionar activo principal → sensores (sub-activos)
-import { useState } from "react";
-import type { SensorGroup } from "@/lib/fracttal";
+// Paso 1 del wizard: elegir activo principal (lista de la ubicación) → sensores
+import { useEffect, useMemo, useState } from "react";
+import type { Asset, SensorGroup } from "@/lib/fracttal";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
 
 export default function NuevoInforme() {
-  const [assetCode, setAssetCode] = useState("");
-  const [estado, setEstado] = useState<Estado>("idle");
-  const [error, setError] = useState("");
+  // --- Activos de la ubicación ---
+  const [activos, setActivos] = useState<Asset[]>([]);
+  const [ubicacion, setUbicacion] = useState("");
+  const [estadoActivos, setEstadoActivos] = useState<Estado>("cargando");
+  const [errorActivos, setErrorActivos] = useState("");
+  const [filtro, setFiltro] = useState("");
+  const [activoSel, setActivoSel] = useState<Asset | null>(null);
+
+  // --- Sensores del activo elegido ---
+  const [estadoSensores, setEstadoSensores] = useState<Estado>("idle");
+  const [errorSensores, setErrorSensores] = useState("");
   const [grupos, setGrupos] = useState<SensorGroup[]>([]);
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
 
-  async function buscar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!assetCode.trim()) return;
-    setEstado("cargando");
-    setError("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/fracttal/assets");
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          throw new Error(json.message ?? `Error ${res.status}`);
+        }
+        setActivos(json.data);
+        setUbicacion(json.location);
+        setEstadoActivos("ok");
+      } catch (err) {
+        setErrorActivos(
+          err instanceof Error ? err.message : "Error desconocido"
+        );
+        setEstadoActivos("error");
+      }
+    })();
+  }, []);
+
+  const activosFiltrados = useMemo(() => {
+    const q = filtro.trim().toLowerCase();
+    if (!q) return activos;
+    return activos.filter(
+      (a) =>
+        a.code.toLowerCase().includes(q) ||
+        (a.field_1 ?? a.description).toLowerCase().includes(q)
+    );
+  }, [activos, filtro]);
+
+  async function elegirActivo(a: Asset) {
+    setActivoSel(a);
+    setEstadoSensores("cargando");
+    setErrorSensores("");
     setGrupos([]);
     setSeleccion(new Set());
     try {
       const res = await fetch(
-        `/api/fracttal/sensors?code=${encodeURIComponent(assetCode.trim())}`
+        `/api/fracttal/sensors?code=${encodeURIComponent(a.code)}`
       );
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.message ?? `Error ${res.status}`);
       }
       setGrupos(json.data);
-      // Por defecto todos los sensores seleccionados
       setSeleccion(new Set(json.data.map((g: SensorGroup) => g.code)));
-      setEstado("ok");
+      setEstadoSensores("ok");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
-      setEstado("error");
+      setErrorSensores(
+        err instanceof Error ? err.message : "Error desconocido"
+      );
+      setEstadoSensores("error");
     }
   }
 
@@ -48,13 +86,12 @@ export default function NuevoInforme() {
   }
 
   function continuar() {
-    // TODO Paso 2: datos de inspección. Por ahora persistimos la selección.
     sessionStorage.setItem(
       "informe-seleccion",
-      JSON.stringify({ assetCode, sensores: [...seleccion] })
+      JSON.stringify({ assetCode: activoSel?.code, sensores: [...seleccion] })
     );
     alert(
-      `Activo ${assetCode} · ${seleccion.size} sensor(es) seleccionados.\nEl paso 2 (datos de inspección) llega en el siguiente PR.`
+      `Activo ${activoSel?.code} · ${seleccion.size} sensor(es) seleccionados.\nEl paso 2 (datos de inspección) llega en el siguiente PR.`
     );
   }
 
@@ -66,38 +103,97 @@ export default function NuevoInforme() {
         </p>
         <h2 className="text-xl font-semibold">Activo y sensores</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Escribe el código del activo principal en Fracttal (ej.{" "}
-          <code className="rounded bg-slate-100 px-1">MOLINO-6-5A</code>). Se
-          listarán sus sensores y marcarás cuáles incluir en el informe.
+          Selecciona el activo principal
+          {ubicacion && (
+            <>
+              {" "}
+              de la ubicación{" "}
+              <code className="rounded bg-slate-100 px-1">{ubicacion}</code>
+            </>
+          )}
+          . Luego marca los sensores a incluir en el informe.
         </p>
       </div>
 
-      <form onSubmit={buscar} className="flex gap-2">
-        <input
-          value={assetCode}
-          onChange={(e) => setAssetCode(e.target.value)}
-          placeholder="Código del activo principal"
-          className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-brand focus:outline-none"
-        />
-        <button
-          type="submit"
-          disabled={estado === "cargando"}
-          className="rounded-lg bg-brand px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {estado === "cargando" ? "Buscando…" : "Buscar"}
-        </button>
-      </form>
-
-      {estado === "error" && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
+      {/* --- Lista de activos --- */}
+      {estadoActivos === "cargando" && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
+          Cargando activos de Fracttal…
         </div>
       )}
 
-      {estado === "ok" && grupos.length === 0 && (
+      {estadoActivos === "error" && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {errorActivos}
+        </div>
+      )}
+
+      {estadoActivos === "ok" && (
+        <div className="rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 p-3">
+            <input
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+              placeholder={`Filtrar entre ${activos.length} activo(s)…`}
+              className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+            />
+          </div>
+          <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+            {activosFiltrados.length === 0 && (
+              <li className="p-4 text-sm text-slate-500">
+                Sin resultados. La ubicación no tiene equipos o el filtro no
+                coincide.
+              </li>
+            )}
+            {activosFiltrados.map((a) => (
+              <li key={a.id}>
+                <button
+                  onClick={() => elegirActivo(a)}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 ${
+                    activoSel?.id === a.id ? "bg-brand/5" : ""
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="font-medium">
+                      {a.field_1 ?? a.description}
+                    </span>
+                    <span className="ml-2 text-xs text-slate-500">
+                      {a.code}
+                    </span>
+                    {a.parent_description && (
+                      <span className="block truncate text-xs text-slate-400">
+                        {a.parent_description}
+                      </span>
+                    )}
+                  </span>
+                  {activoSel?.id === a.id && (
+                    <span className="shrink-0 rounded-full bg-brand px-2 py-0.5 text-xs font-medium text-white">
+                      Seleccionado
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* --- Sensores del activo --- */}
+      {estadoSensores === "cargando" && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
+          Cargando sensores de {activoSel?.code}…
+        </div>
+      )}
+
+      {estadoSensores === "error" && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {errorSensores}
+        </div>
+      )}
+
+      {estadoSensores === "ok" && grupos.length === 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           El activo no tiene medidores asociados (ni en sus sub-activos).
-          Verifica el código o crea los medidores en Fracttal.
         </div>
       )}
 
@@ -105,7 +201,8 @@ export default function NuevoInforme() {
         <>
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">
-              Sensores encontrados ({grupos.length})
+              Sensores de {activoSel?.field_1 ?? activoSel?.code} (
+              {grupos.length})
             </h3>
             <button
               onClick={() =>
@@ -148,11 +245,6 @@ export default function NuevoInforme() {
                           · {g.description}
                         </span>
                       </p>
-                      {g.parentPath && (
-                        <p className="truncate text-xs text-slate-400">
-                          {g.parentPath}
-                        </p>
-                      )}
                       <p className="mt-1 text-xs text-slate-500">
                         {g.meters.length} medidor(es):{" "}
                         {g.meters

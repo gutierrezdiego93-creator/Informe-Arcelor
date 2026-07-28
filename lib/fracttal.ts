@@ -63,6 +63,21 @@ export interface SensorGroup {
   meters: Meter[];
 }
 
+export interface Asset {
+  id: number;
+  active: boolean;
+  code: string;
+  description: string;
+  /** 1=Ubicación, 2=Equipo, 3=Herramienta, 4=Repuesto, 5=Digital */
+  id_type_item: number;
+  field_1: string | null; // Nombre
+  field_2: string | null; // Fabricante (equipos)
+  field_3: string | null; // Modelo (equipos)
+  parent_description: string | null;
+  location_code: string | null;
+  available: boolean;
+}
+
 // ---------- Token OAuth con caché en memoria ----------
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
@@ -138,6 +153,55 @@ function qs(params: Record<string, string | number | undefined>): string {
     "?" +
     entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&")
   );
+}
+
+// ---------- Endpoint de activos ----------
+
+/** GET /items/ — activos con filtros (location_code, item_type, is_tree…) */
+export async function getItems(params: {
+  code?: string;
+  location_code?: string;
+  item_type?: number;
+  active?: boolean;
+  is_tree?: boolean;
+  start?: number;
+  limit?: number;
+}): Promise<FracttalResponse<Asset[]>> {
+  return fracttalFetch<Asset[]>(
+    `/items/${qs(params as Record<string, string | number | undefined>)}`
+  );
+}
+
+/**
+ * Lista los EQUIPOS (id_type_item = 2) bajo una ubicación, incluyendo toda
+ * la jerarquía descendiente (is_tree=true). Pagina de 100 en 100.
+ */
+export async function getAssetsForLocation(
+  locationCode: string
+): Promise<Asset[]> {
+  const all: Asset[] = [];
+  let start = 0;
+  for (;;) {
+    const page = await getItems({
+      location_code: locationCode,
+      is_tree: true,
+      start,
+      limit: 100,
+    });
+    all.push(...(page.data ?? []));
+    if (!page.data || page.data.length < 100) break;
+    start += 100;
+  }
+  // Solo equipos activos. Se excluyen los sub-activos (sensores): un equipo
+  // cuyo padre (location_code) es OTRO equipo es un sub-activo, no un equipo
+  // principal.
+  const equipos = all.filter((a) => a.active && a.id_type_item === 2);
+  const codigosEquipos = new Set(equipos.map((a) => a.code));
+  return equipos
+    .filter((a) => !a.location_code || !codigosEquipos.has(a.location_code))
+    .sort((a, b) =>
+      (a.field_1 ?? a.description).localeCompare(b.field_1 ?? b.description)
+    );
 }
 
 // ---------- Endpoints de medidores ----------

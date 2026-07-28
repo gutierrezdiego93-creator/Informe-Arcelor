@@ -56,8 +56,14 @@ function claseNivel(n: Nivel): string {
   return "bg-red-600 text-white";
 }
 
+/** Bloque de evidencia (paso 5): hasta 2 fotos de espectro + comentario */
+interface Evidencia {
+  fotos: string[]; // data URLs (base64)
+  comentario: string;
+}
+
 export default function NuevoInforme() {
-  const [paso, setPaso] = useState<1 | 2 | 3 | 4>(1);
+  const [paso, setPaso] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // --- Paso 1: activos y sensores ---
   const [activos, setActivos] = useState<Asset[]>([]);
@@ -90,6 +96,11 @@ export default function NuevoInforme() {
   // --- Paso 4: diagnóstico y recomendaciones GENERALES del informe ---
   const [diagnosticoGeneral, setDiagnosticoGeneral] = useState("");
   const [recomendacionesGeneral, setRecomendacionesGeneral] = useState("");
+
+  // --- Paso 5: evidencias (espectros) ---
+  const [evidencias, setEvidencias] = useState<Evidencia[]>([
+    { fotos: [], comentario: "" },
+  ]);
 
   useEffect(() => {
     (async () => {
@@ -220,9 +231,43 @@ export default function NuevoInforme() {
     setPaso(4);
   }
 
+  /** Lee un archivo de imagen y lo agrega como data URL al bloque indicado */
+  function agregarFoto(idxBloque: number, file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setEvidencias((prev) =>
+        prev.map((ev, i) =>
+          i === idxBloque && ev.fotos.length < 2
+            ? { ...ev, fotos: [...ev.fotos, dataUrl] }
+            : ev
+        )
+      );
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function quitarFoto(idxBloque: number, idxFoto: number) {
+    setEvidencias((prev) =>
+      prev.map((ev, i) =>
+        i === idxBloque
+          ? { ...ev, fotos: ev.fotos.filter((_, j) => j !== idxFoto) }
+          : ev
+      )
+    );
+  }
+
+  function setComentario(idxBloque: number, texto: string) {
+    setEvidencias((prev) =>
+      prev.map((ev, i) =>
+        i === idxBloque ? { ...ev, comentario: texto } : ev
+      )
+    );
+  }
+
   function finalizarBorrador() {
     alert(
-      "Datos capturados. Los pasos 5-7 (evidencias fotográficas, vista previa y generación del PDF/Word) llegan en el siguiente cambio."
+      "¡Informe capturado completo! El siguiente cambio agrega la vista previa y la generación del PDF/Word."
     );
   }
 
@@ -238,6 +283,7 @@ export default function NuevoInforme() {
         {paso === 2 && "Datos de inspección"}
         {paso === 3 && "Valores de vibración"}
         {paso === 4 && "Diagnóstico y recomendaciones"}
+        {paso === 5 && "Evidencias · Espectros"}
       </h2>
       {activoSel && paso > 1 && (
         <p className="mt-1 text-sm text-slate-600">
@@ -806,10 +852,122 @@ export default function NuevoInforme() {
               ← Paso 3
             </button>
             <button
-              onClick={finalizarBorrador}
+              onClick={() => setPaso(5)}
               className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90"
             >
               Continuar → Paso 5
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ================= PASO 5 ================= */}
+      {paso === 5 && (
+        <>
+          <p className="text-sm text-slate-600">
+            Sube las capturas de los <strong>espectros</strong> del colector
+            (hasta 2 fotos por bloque) y escribe abajo el comentario o
+            recomendación de ese análisis, como en el informe original. Puedes
+            agregar más bloques si documentas varios puntos.
+          </p>
+
+          {evidencias.map((ev, i) => (
+            <div
+              key={i}
+              className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Espectro {i + 1}</h3>
+                {evidencias.length > 1 && (
+                  <button
+                    onClick={() =>
+                      setEvidencias((prev) =>
+                        prev.filter((_, j) => j !== i)
+                      )
+                    }
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    Eliminar bloque
+                  </button>
+                )}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                {ev.fotos.map((foto, j) => (
+                  <div
+                    key={j}
+                    className="relative overflow-hidden rounded-lg border border-slate-200"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={foto}
+                      alt={`Espectro ${i + 1} - foto ${j + 1}`}
+                      className="max-h-72 w-full bg-white object-contain"
+                    />
+                    <button
+                      onClick={() => quitarFoto(i, j)}
+                      className="absolute right-2 top-2 rounded-full bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))}
+                {ev.fotos.length < 2 && (
+                  <label className="flex h-40 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand hover:text-brand">
+                    <span className="text-2xl">+</span>
+                    <span>
+                      Subir foto {ev.fotos.length + 1} de 2 (espectro)
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) agregarFoto(i, f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">
+                  Comentario / recomendación del espectro
+                </label>
+                <textarea
+                  value={ev.comentario}
+                  onChange={(e) => setComentario(i, e.target.value)}
+                  rows={3}
+                  placeholder="Ej. El análisis orbital confirma la desalineación entre piñón y corona (se refleja el 2xGM). Dar seguimiento…"
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+                />
+              </div>
+            </div>
+          ))}
+
+          <button
+            onClick={() =>
+              setEvidencias((prev) => [...prev, { fotos: [], comentario: "" }])
+            }
+            className="w-full rounded-xl border-2 border-dashed border-slate-300 py-3 text-sm font-medium text-slate-500 hover:border-brand hover:text-brand"
+          >
+            + Agregar otro espectro
+          </button>
+
+          <div className="flex justify-between border-t border-slate-200 pt-4">
+            <button
+              onClick={() => setPaso(4)}
+              className="rounded-lg border border-slate-300 px-6 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              ← Paso 4
+            </button>
+            <button
+              onClick={finalizarBorrador}
+              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Finalizar informe →
             </button>
           </div>
         </>

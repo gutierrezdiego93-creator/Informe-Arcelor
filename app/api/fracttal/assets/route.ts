@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAssetsForLocation } from "@/lib/fracttal";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // la consulta a Fracttal puede tardar
 
 const DEFAULT_LOCATION = process.env.FRACTTAL_LOCATION_CODE ?? "ARCELOR01";
 

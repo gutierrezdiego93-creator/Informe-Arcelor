@@ -180,11 +180,15 @@ export async function getAssetsForLocation(
   locationCode: string
 ): Promise<Asset[]> {
   const all: Asset[] = [];
+  const MAX_PAGES = 10; // tope de seguridad (1000 registros)
+
+  // 1) Equipos hijos directos de la ubicación (rápido)
   let start = 0;
-  for (;;) {
+  for (let i = 0; i < MAX_PAGES; i++) {
     const page = await getItems({
       location_code: locationCode,
-      is_tree: true,
+      item_type: 2,
+      active: true,
       start,
       limit: 100,
     });
@@ -192,12 +196,29 @@ export async function getAssetsForLocation(
     if (!page.data || page.data.length < 100) break;
     start += 100;
   }
-  // Solo equipos activos. Se excluyen los sub-activos (sensores): un equipo
-  // cuyo padre (location_code) es OTRO equipo es un sub-activo, no un equipo
-  // principal.
-  const equipos = all.filter((a) => a.active && a.id_type_item === 2);
-  const codigosEquipos = new Set(equipos.map((a) => a.code));
-  return equipos
+
+  // 2) Si no hay hijos directos, buscar en toda la jerarquía descendiente
+  if (all.length === 0) {
+    start = 0;
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const page = await getItems({
+        location_code: locationCode,
+        item_type: 2,
+        active: true,
+        is_tree: true,
+        start,
+        limit: 100,
+      });
+      all.push(...(page.data ?? []));
+      if (!page.data || page.data.length < 100) break;
+      start += 100;
+    }
+  }
+
+  // Excluir sub-activos (sensores): un equipo cuyo padre (location_code)
+  // es OTRO equipo del listado es un sub-activo, no un equipo principal.
+  const codigosEquipos = new Set(all.map((a) => a.code));
+  return all
     .filter((a) => !a.location_code || !codigosEquipos.has(a.location_code))
     .sort((a, b) =>
       (a.field_1 ?? a.description).localeCompare(b.field_1 ?? b.description)

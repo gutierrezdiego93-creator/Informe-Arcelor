@@ -2,6 +2,7 @@
 
 // Wizard del informe de condición
 // Paso 1: activo y sensores · Paso 2: datos de inspección · Paso 3: valores
+// Paso 4: diagnóstico y recomendaciones por sensor
 import { useEffect, useMemo, useState } from "react";
 import type { Asset, Meter, SensorGroup } from "@/lib/fracttal";
 
@@ -41,8 +42,15 @@ function hoyISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Diagnóstico por sensor (paso 4) */
+interface DiagSensor {
+  nivel: Nivel;
+  diagnostico: string;
+  recomendaciones: string;
+}
+
 export default function NuevoInforme() {
-  const [paso, setPaso] = useState<1 | 2 | 3>(1);
+  const [paso, setPaso] = useState<1 | 2 | 3 | 4>(1);
 
   // --- Paso 1: activos y sensores ---
   const [activos, setActivos] = useState<Asset[]>([]);
@@ -69,6 +77,11 @@ export default function NuevoInforme() {
 
   // --- Paso 3: valores por medidor (editables), clave = serial ---
   const [valores, setValores] = useState<Record<string, string>>({});
+  // Medidores EXCLUIDOS del informe (todos incluidos por defecto)
+  const [excluidos, setExcluidos] = useState<Set<string>>(new Set());
+
+  // --- Paso 4: diagnóstico por sensor, clave = code del sensor ---
+  const [diag, setDiag] = useState<Record<string, DiagSensor>>({});
 
   useEffect(() => {
     (async () => {
@@ -110,6 +123,7 @@ export default function NuevoInforme() {
     setErrorSensores("");
     setGrupos([]);
     setSeleccion(new Set());
+    setExcluidos(new Set());
     try {
       const res = await fetch(
         `/api/fracttal/sensors?code=${encodeURIComponent(a.code)}`
@@ -141,22 +155,91 @@ export default function NuevoInforme() {
     });
   }
 
+  function toggleMedidor(serial: string) {
+    setExcluidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(serial)) next.delete(serial);
+      else next.add(serial);
+      return next;
+    });
+  }
+
+  /** Marca o desmarca todos los medidores de un sensor */
+  function toggleGrupoMedidores(g: SensorGroup) {
+    setExcluidos((prev) => {
+      const next = new Set(prev);
+      const todosIncluidos = g.meters.every((m) => !next.has(m.serial));
+      for (const m of g.meters) {
+        if (todosIncluidos) next.add(m.serial);
+        else next.delete(m.serial);
+      }
+      return next;
+    });
+  }
+
+  const totalMedidoresIncluidos = useMemo(
+    () =>
+      gruposSeleccionados.reduce(
+        (acc, g) =>
+          acc + g.meters.filter((m) => !excluidos.has(m.serial)).length,
+        0
+      ),
+    [gruposSeleccionados, excluidos]
+  );
+
   function irAPaso3() {
-    // Precargar valores desde la última lectura de cada medidor
+    // Precargar valores desde la última lectura de cada medidor.
+    // Las VELOCIDADES llegan de Fracttal en mm/s: convertir a in/s (÷ 25.4).
     const iniciales: Record<string, string> = {};
     for (const g of gruposSeleccionados) {
       for (const m of g.meters) {
-        iniciales[m.serial] =
-          valores[m.serial] ?? (m.last_data ? String(m.last_data.value) : "");
+        if (valores[m.serial] !== undefined) {
+          iniciales[m.serial] = valores[m.serial];
+        } else if (m.last_data) {
+          iniciales[m.serial] = esVelocidad(m)
+            ? mmsAIns(m.last_data.value)
+            : String(m.last_data.value);
+        } else {
+          iniciales[m.serial] = "";
+        }
       }
     }
     setValores(iniciales);
     setPaso(3);
   }
 
+  function irAPaso4() {
+    // Precargar una tarjeta de diagnóstico por sensor incluido
+    setDiag((prev) => {
+      const next = { ...prev };
+      for (const g of gruposSeleccionados) {
+        if (!next[g.code]) {
+          next[g.code] = {
+            nivel: "NORMAL",
+            diagnostico: "",
+            recomendaciones: "",
+          };
+        }
+      }
+      return next;
+    });
+    setPaso(4);
+  }
+
+  function setDiagCampo(
+    code: string,
+    campo: keyof DiagSensor,
+    valor: string
+  ) {
+    setDiag((prev) => ({
+      ...prev,
+      [code]: { ...prev[code], [campo]: valor },
+    }));
+  }
+
   function finalizarBorrador() {
     alert(
-      "Datos capturados. Los pasos 4-7 (evidencias, diagnóstico, recomendaciones y generación del PDF/Word) llegan en el siguiente PR."
+      "Datos capturados. Los pasos 5-7 (evidencias fotográficas, vista previa y generación del PDF/Word) llegan en el siguiente cambio."
     );
   }
 
@@ -171,6 +254,7 @@ export default function NuevoInforme() {
         {paso === 1 && "Activo y sensores"}
         {paso === 2 && "Datos de inspección"}
         {paso === 3 && "Valores de vibración"}
+        {paso === 4 && "Diagnóstico y recomendaciones"}
       </h2>
       {activoSel && paso > 1 && (
         <p className="mt-1 text-sm text-slate-600">
@@ -491,63 +575,110 @@ export default function NuevoInforme() {
       {paso === 3 && (
         <>
           <p className="text-sm text-slate-600">
-            Valores precargados con la <strong>última lectura</strong> de cada
-            medidor en Fracttal. Puedes ajustarlos si tomaste una medición más
-            reciente con el colector.
+            Marca los medidores que entrarán en el informe (valores
+            precargados con la <strong>última lectura</strong> de Fracttal;
+            puedes ajustarlos si tomaste una medición más reciente con el
+            colector). Las <strong>velocidades</strong> se convierten
+            automáticamente de mm/s (dato crudo de Fracttal) a in/s (÷ 25.4).
           </p>
 
-          {gruposSeleccionados.map((g) => (
-            <div
-              key={g.code}
-              className="overflow-hidden rounded-xl border border-slate-200 bg-white"
-            >
-              <div className="border-b border-slate-200 bg-slate-50 px-4 py-2">
-                <span className="font-semibold">{g.code}</span>{" "}
-                <span className="text-sm text-slate-500">
-                  · {g.description}
-                </span>
-              </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-2">Medidor</th>
-                    <th className="px-4 py-2">Valor</th>
-                    <th className="px-4 py-2">Unidad</th>
-                    <th className="px-4 py-2">Última lectura</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {ordenarMedidores(g.meters).map((m) => (
-                    <tr key={m.id}>
-                      <td className="px-4 py-2">{m.description}</td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          step="any"
-                          value={valores[m.serial] ?? ""}
-                          onChange={(e) =>
-                            setValores((v) => ({
-                              ...v,
-                              [m.serial]: e.target.value,
-                            }))
-                          }
-                          className="w-28 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
-                        />
-                      </td>
-                      <td className="px-4 py-2 text-slate-500">
-                        {m.units_code}
-                      </td>
-                      <td className="px-4 py-2 text-xs text-slate-400">
-                        {m.last_data
-                          ? new Date(m.last_data.date).toLocaleString("es-MX")
-                          : "Sin lecturas"}
-                      </td>
+          {gruposSeleccionados.map((g) => {
+            const incluidosGrupo = g.meters.filter(
+              (m) => !excluidos.has(m.serial)
+            ).length;
+            return (
+              <div
+                key={g.code}
+                className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+              >
+                <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
+                  <div>
+                    <span className="font-semibold">{g.code}</span>{" "}
+                    <span className="text-sm text-slate-500">
+                      · {g.description}
+                    </span>
+                    <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600">
+                      {incluidosGrupo}/{g.meters.length} en informe
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => toggleGrupoMedidores(g)}
+                    className="text-xs text-brand hover:underline"
+                  >
+                    {incluidosGrupo === g.meters.length
+                      ? "Desmarcar todos"
+                      : "Marcar todos"}
+                  </button>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                      <th className="w-10 px-4 py-2"></th>
+                      <th className="px-4 py-2">Medidor</th>
+                      <th className="px-4 py-2">Valor</th>
+                      <th className="px-4 py-2">Unidad</th>
+                      <th className="px-4 py-2">Última lectura</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {ordenarMedidores(g.meters).map((m) => {
+                      const incluido = !excluidos.has(m.serial);
+                      return (
+                        <tr
+                          key={m.id}
+                          className={incluido ? "" : "opacity-40"}
+                        >
+                          <td className="px-4 py-2">
+                            <input
+                              type="checkbox"
+                              checked={incluido}
+                              onChange={() => toggleMedidor(m.serial)}
+                              className="h-4 w-4 accent-[#2929ff]"
+                            />
+                          </td>
+                          <td className="px-4 py-2">{m.description}</td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              step="any"
+                              disabled={!incluido}
+                              value={valores[m.serial] ?? ""}
+                              onChange={(e) =>
+                                setValores((v) => ({
+                                  ...v,
+                                  [m.serial]: e.target.value,
+                                }))
+                              }
+                              className="w-28 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none disabled:bg-slate-100"
+                            />
+                          </td>
+                          <td className="px-4 py-2 text-slate-500">
+                            {m.units_code}
+                          </td>
+                          <td className="px-4 py-2 text-xs text-slate-400">
+                            {m.last_data ? (
+                              <>
+                                {new Date(m.last_data.date).toLocaleString(
+                                  "es-MX"
+                                )}
+                                {esVelocidad(m) && (
+                                  <span className="block text-slate-300">
+                                    {m.last_data.value} mm/s en Fracttal
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              "Sin lecturas"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
 
           <div className="flex justify-between border-t border-slate-200 pt-4">
             <button
@@ -557,16 +688,136 @@ export default function NuevoInforme() {
               ← Paso 2
             </button>
             <button
+              onClick={irAPaso4}
+              disabled={totalMedidoresIncluidos === 0}
+              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Continuar → Paso 4 ({totalMedidoresIncluidos} medidores)
+            </button>
+          </div>
+          {totalMedidoresIncluidos === 0 && (
+            <p className="text-xs text-slate-400">
+              * Marca al menos un medidor para continuar.
+            </p>
+          )}
+        </>
+      )}
+
+      {/* ================= PASO 4 ================= */}
+      {paso === 4 && (
+        <>
+          <p className="text-sm text-slate-600">
+            Registra el <strong>nivel de condición</strong>, el diagnóstico y
+            las recomendaciones de cada sensor incluido en el informe.
+          </p>
+
+          {gruposSeleccionados.map((g) => {
+            const d = diag[g.code] ?? {
+              nivel: "NORMAL" as Nivel,
+              diagnostico: "",
+              recomendaciones: "",
+            };
+            return (
+              <div
+                key={g.code}
+                className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="font-semibold">{g.code}</span>{" "}
+                    <span className="text-sm text-slate-500">
+                      · {g.description}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    {NIVELES.map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setDiagCampo(g.code, "nivel", n)}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                          d.nivel === n
+                            ? n === "NORMAL"
+                              ? "border-green-600 bg-green-600 text-white"
+                              : n === "ALERTA"
+                                ? "border-amber-500 bg-amber-500 text-white"
+                                : "border-red-600 bg-red-600 text-white"
+                            : "border-slate-300 bg-white text-slate-600"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">
+                      Diagnóstico
+                    </label>
+                    <textarea
+                      value={d.diagnostico}
+                      onChange={(e) =>
+                        setDiagCampo(g.code, "diagnostico", e.target.value)
+                      }
+                      rows={3}
+                      placeholder="Ej. Niveles de vibración dentro de norma. Sin cambios significativos respecto a la semana anterior…"
+                      className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">
+                      Recomendaciones
+                    </label>
+                    <textarea
+                      value={d.recomendaciones}
+                      onChange={(e) =>
+                        setDiagCampo(g.code, "recomendaciones", e.target.value)
+                      }
+                      rows={3}
+                      placeholder="Ej. Continuar monitoreo semanal. Programar inspección de rodamientos…"
+                      className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="flex justify-between border-t border-slate-200 pt-4">
+            <button
+              onClick={() => setPaso(3)}
+              className="rounded-lg border border-slate-300 px-6 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              ← Paso 3
+            </button>
+            <button
               onClick={finalizarBorrador}
               className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90"
             >
-              Continuar → Paso 4
+              Continuar → Paso 5
             </button>
           </div>
         </>
       )}
     </div>
   );
+}
+
+/** ¿El medidor es de velocidad? (por unidad o por serial tipo CLC_velX) */
+function esVelocidad(m: Meter): boolean {
+  return (
+    m.units_code === "in/s" ||
+    m.units_code === "mm/s" ||
+    m.serial.toLowerCase().includes("vel")
+  );
+}
+
+/** Convierte mm/s (dato crudo de Fracttal) a in/s. 1 in = 25.4 mm */
+function mmsAIns(mms: number): string {
+  const ins = mms / 25.4;
+  // 4 decimales máximo, sin ceros de sobra (ej. 4.48 → 0.1764)
+  return String(Number(ins.toFixed(4)));
 }
 
 /** Velocidades primero (como en el informe), luego aceleraciones y temperatura */

@@ -42,11 +42,18 @@ function hoyISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Diagnóstico por sensor (paso 4) */
-interface DiagSensor {
-  nivel: Nivel;
-  diagnostico: string;
-  recomendaciones: string;
+/** Límites de severidad para VELOCIDAD (in/s), como en el informe manual */
+function nivelPorVelocidad(v: number): Nivel {
+  if (v < 0.2) return "NORMAL";
+  if (v < 0.3) return "ALERTA";
+  return "CRÍTICO";
+}
+
+/** Clases de color de celda según nivel (verde / amarillo / rojo) */
+function claseNivel(n: Nivel): string {
+  if (n === "NORMAL") return "bg-green-500 text-white";
+  if (n === "ALERTA") return "bg-yellow-300 text-slate-900";
+  return "bg-red-600 text-white";
 }
 
 export default function NuevoInforme() {
@@ -80,8 +87,9 @@ export default function NuevoInforme() {
   // Medidores EXCLUIDOS del informe (todos incluidos por defecto)
   const [excluidos, setExcluidos] = useState<Set<string>>(new Set());
 
-  // --- Paso 4: diagnóstico por sensor, clave = code del sensor ---
-  const [diag, setDiag] = useState<Record<string, DiagSensor>>({});
+  // --- Paso 4: diagnóstico y recomendaciones GENERALES del informe ---
+  const [diagnosticoGeneral, setDiagnosticoGeneral] = useState("");
+  const [recomendacionesGeneral, setRecomendacionesGeneral] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -209,32 +217,7 @@ export default function NuevoInforme() {
   }
 
   function irAPaso4() {
-    // Precargar una tarjeta de diagnóstico por sensor incluido
-    setDiag((prev) => {
-      const next = { ...prev };
-      for (const g of gruposSeleccionados) {
-        if (!next[g.code]) {
-          next[g.code] = {
-            nivel: "NORMAL",
-            diagnostico: "",
-            recomendaciones: "",
-          };
-        }
-      }
-      return next;
-    });
     setPaso(4);
-  }
-
-  function setDiagCampo(
-    code: string,
-    campo: keyof DiagSensor,
-    valor: string
-  ) {
-    setDiag((prev) => ({
-      ...prev,
-      [code]: { ...prev[code], [campo]: valor },
-    }));
   }
 
   function finalizarBorrador() {
@@ -707,82 +690,113 @@ export default function NuevoInforme() {
       {paso === 4 && (
         <>
           <p className="text-sm text-slate-600">
-            Registra el <strong>nivel de condición</strong>, el diagnóstico y
-            las recomendaciones de cada sensor incluido en el informe.
+            Cuadro de valores globales de vibración con el semáforo del
+            informe: <span className="font-semibold text-green-600">verde</span>{" "}
+            &lt; 0.2 in/s ·{" "}
+            <span className="font-semibold text-amber-500">amarillo</span> 0.2
+            – 0.3 in/s ·{" "}
+            <span className="font-semibold text-red-600">rojo</span> ≥ 0.3
+            in/s. Los colores se calculan solos con los valores del paso 3.
           </p>
 
-          {gruposSeleccionados.map((g) => {
-            const d = diag[g.code] ?? {
-              nivel: "NORMAL" as Nivel,
-              diagnostico: "",
-              recomendaciones: "",
-            };
-            return (
-              <div
-                key={g.code}
-                className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <span className="font-semibold">{g.code}</span>{" "}
-                    <span className="text-sm text-slate-500">
-                      · {g.description}
+          {/* Cuadro de velocidades estilo informe */}
+          <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b-2 border-slate-300 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
+                  <th className="px-4 py-2">Punto de medición</th>
+                  <th className="px-4 py-2">Posición</th>
+                  <th className="px-4 py-2 text-center">
+                    Velocidad (in/s)
+                    <span className="block normal-case text-slate-400">
+                      {datos.fecha}
                     </span>
-                  </div>
-                  <div className="flex gap-2">
-                    {NIVELES.map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setDiagCampo(g.code, "nivel", n)}
-                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
-                          d.nivel === n
-                            ? n === "NORMAL"
-                              ? "border-green-600 bg-green-600 text-white"
-                              : n === "ALERTA"
-                                ? "border-amber-500 bg-amber-500 text-white"
-                                : "border-red-600 bg-red-600 text-white"
-                            : "border-slate-300 bg-white text-slate-600"
-                        }`}
+                  </th>
+                  <th className="px-4 py-2 text-center">Condición</th>
+                </tr>
+              </thead>
+              <tbody>
+                {gruposSeleccionados.map((g) => {
+                  const velocidades = ordenarMedidores(g.meters).filter(
+                    (m) => esVelocidad(m) && !excluidos.has(m.serial)
+                  );
+                  if (velocidades.length === 0) return null;
+                  return velocidades.map((m, i) => {
+                    const v = parseFloat(valores[m.serial] ?? "");
+                    const tieneValor = !isNaN(v);
+                    const nivel = tieneValor ? nivelPorVelocidad(v) : null;
+                    return (
+                      <tr
+                        key={m.id}
+                        className={
+                          i === velocidades.length - 1
+                            ? "border-b-2 border-slate-300"
+                            : "border-b border-dashed border-slate-200"
+                        }
                       >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium">
-                      Diagnóstico
-                    </label>
-                    <textarea
-                      value={d.diagnostico}
-                      onChange={(e) =>
-                        setDiagCampo(g.code, "diagnostico", e.target.value)
-                      }
-                      rows={3}
-                      placeholder="Ej. Niveles de vibración dentro de norma. Sin cambios significativos respecto a la semana anterior…"
-                      className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium">
-                      Recomendaciones
-                    </label>
-                    <textarea
-                      value={d.recomendaciones}
-                      onChange={(e) =>
-                        setDiagCampo(g.code, "recomendaciones", e.target.value)
-                      }
-                      rows={3}
-                      placeholder="Ej. Continuar monitoreo semanal. Programar inspección de rodamientos…"
-                      className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                        {i === 0 && (
+                          <td
+                            rowSpan={velocidades.length}
+                            className="border-r border-slate-200 px-4 py-2 align-middle font-semibold"
+                          >
+                            {g.code}
+                            <span className="block text-xs font-normal text-slate-500">
+                              {g.description}
+                            </span>
+                          </td>
+                        )}
+                        <td className="px-4 py-1.5 text-slate-600">
+                          {posicionDeMedidor(m)}
+                        </td>
+                        <td className="px-4 py-1.5 text-center">
+                          {tieneValor ? (
+                            <span
+                              className={`inline-block w-24 rounded px-2 py-1 font-bold ${claseNivel(nivel!)}`}
+                            >
+                              {v.toFixed(4)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-1.5 text-center text-xs font-semibold">
+                          {nivel ?? ""}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Diagnóstico y recomendaciones GENERALES */}
+          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-6 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Diagnóstico general
+              </label>
+              <textarea
+                value={diagnosticoGeneral}
+                onChange={(e) => setDiagnosticoGeneral(e.target.value)}
+                rows={5}
+                placeholder="Ej. Los puntos 3, 4 y 9 presentan niveles críticos de vibración. Se observa incremento respecto a la semana anterior…"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Recomendaciones generales
+              </label>
+              <textarea
+                value={recomendacionesGeneral}
+                onChange={(e) => setRecomendacionesGeneral(e.target.value)}
+                rows={5}
+                placeholder="Ej. Programar inspección de rodamientos del reductor. Continuar monitoreo semanal…"
+                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
+              />
+            </div>
+          </div>
 
           <div className="flex justify-between border-t border-slate-200 pt-4">
             <button
@@ -818,6 +832,17 @@ function mmsAIns(mms: number): string {
   const ins = mms / 25.4;
   // 4 decimales máximo, sin ceros de sobra (ej. 4.48 → 0.1764)
   return String(Number(ins.toFixed(4)));
+}
+
+/** Posición del punto: extrae "Horizontal/Vertical/Axial" de la descripción */
+function posicionDeMedidor(m: Meter): string {
+  const match = m.description.match(/\((.+?)\)/);
+  if (match) return match[1];
+  const s = m.serial.toLowerCase();
+  if (s.endsWith("x")) return "X";
+  if (s.endsWith("y")) return "Y";
+  if (s.endsWith("z")) return "Z";
+  return m.description;
 }
 
 /** Velocidades primero (como en el informe), luego aceleraciones y temperatura */

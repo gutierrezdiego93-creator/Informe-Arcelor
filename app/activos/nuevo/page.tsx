@@ -387,11 +387,13 @@ export default function NuevoActivoMonitoreado() {
           )}
 
           {estadoSensores === "ok" && grupos.length > 0 && (
-            <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-              {/* Imagen con marcadores */}
+            <div className="grid items-start gap-4 lg:grid-cols-[2fr,1fr]">
+              {/* Imagen con marcadores. self-start + w-full evitan que la
+                  grilla estire este contenedor más alto que la imagen (eso
+                  desalineaba los % de posición respecto al panel lateral). */}
               <div
                 onClick={manejarClicImagen}
-                className={`relative overflow-hidden rounded-xl border-2 bg-white ${
+                className={`relative w-full self-start overflow-hidden rounded-xl border-2 bg-white ${
                   sensorArmado
                     ? "cursor-crosshair border-brand"
                     : "border-slate-300"

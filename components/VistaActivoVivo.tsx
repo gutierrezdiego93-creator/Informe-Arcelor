@@ -1,16 +1,16 @@
 "use client";
 
-// Vista en vivo de un "Activo monitoreado": imagen con marcadores + valores
-// (velocidad H/V/A + temperatura) actualizados manualmente o cada 60s.
+// Vista en vivo de un "Activo monitoreado": imagen con indicadores tipo
+// SCADA/PLC pegados a cada punto (velocidad H/V/A + temperatura), siempre
+// visibles. Se actualiza manualmente o cada 60s.
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import type { ActivoMonitoreadoDetalle } from "@/lib/db";
+import type { ActivoMonitoreadoDetalle, SensorPosicionado } from "@/lib/db";
 import type { Meter, SensorGroup } from "@/lib/fracttal";
 import {
   esVelocidad,
   categoriaDeMedidor,
   mmsAIns,
-  posicionDeMedidor,
   ordenarPorPosicion,
 } from "@/lib/fracttal";
 
@@ -64,7 +64,6 @@ export default function VistaActivoVivo({
   const [segundosRestantes, setSegundosRestantes] = useState(
     SEGUNDOS_AUTOREFRESH
   );
-  const [sensorActivo, setSensorActivo] = useState<string | null>(null);
 
   const cargarValores = useCallback(async () => {
     setEstado((prev) => (prev === "ok" ? "ok" : "cargando"));
@@ -163,138 +162,104 @@ export default function VistaActivoVivo({
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-        {/* Imagen con marcadores */}
-        <div className="relative overflow-hidden rounded-xl border-2 border-slate-300 bg-white">
-          {detalle.imagen_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={detalle.imagen_url}
-              alt={detalle.activo_nombre ?? detalle.activo_code}
-              className="block w-full select-none"
-            />
-          )}
-          {detalle.sensores.map((s) => (
-            <button
-              key={s.id}
-              onClick={() =>
-                setSensorActivo((prev) =>
-                  prev === s.sensor_code ? null : s.sensor_code
-                )
-              }
-              style={{ left: `${s.pos_x}%`, top: `${s.pos_y}%` }}
-              className={`absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow-lg transition ${
-                sensorActivo === s.sensor_code
-                  ? "h-9 w-9 bg-amber-500"
-                  : "h-7 w-7 bg-brand hover:bg-brand/80"
-              }`}
-              title={`${s.sensor_code} · ${s.sensor_label ?? ""}`}
-            >
-              {s.sensor_code.slice(0, 2)}
-            </button>
-          ))}
-        </div>
-
-        {/* Tarjetas de valores por sensor */}
-        <div className="space-y-3">
-          {detalle.sensores.map((s) => {
-            const grupo = metaPorSensor[s.sensor_code];
-            const promedios = promediosPorSensor[s.sensor_code] ?? {};
-            return (
-              <SensorCard
-                key={s.id}
-                codigo={s.sensor_code}
-                etiqueta={s.sensor_label ?? grupo?.description ?? ""}
-                grupo={grupo}
-                promedios={promedios}
-                cargando={estado === "cargando" && !grupo}
-                activo={sensorActivo === s.sensor_code}
-                onClick={() =>
-                  setSensorActivo((prev) =>
-                    prev === s.sensor_code ? null : s.sensor_code
-                  )
-                }
-              />
-            );
-          })}
-        </div>
+      {/* Imagen con indicadores tipo SCADA. self-start evita que la imagen
+          se estire; sin overflow-hidden para que los recuadros de valores
+          puedan salirse del marco cuando el punto está cerca de un borde. */}
+      <div className="relative w-full self-start rounded-xl border-2 border-slate-300 bg-white">
+        {detalle.imagen_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={detalle.imagen_url}
+            alt={detalle.activo_nombre ?? detalle.activo_code}
+            className="block w-full select-none rounded-xl"
+          />
+        )}
+        {detalle.sensores.map((s) => (
+          <IndicadorSensor
+            key={s.id}
+            sensor={s}
+            grupo={metaPorSensor[s.sensor_code]}
+            promedios={promediosPorSensor[s.sensor_code] ?? {}}
+            cargando={estado === "cargando" && !metaPorSensor[s.sensor_code]}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-function SensorCard({
-  codigo,
-  etiqueta,
+function IndicadorSensor({
+  sensor,
   grupo,
   promedios,
   cargando,
-  activo,
-  onClick,
 }: {
-  codigo: string;
-  etiqueta: string;
+  sensor: SensorPosicionado;
   grupo: SensorGroup | undefined;
   promedios: PromediosPorMedidor;
   cargando: boolean;
-  activo: boolean;
-  onClick: () => void;
 }) {
   const meters: Meter[] = grupo?.meters ?? [];
-  const velocidades = ordenarPorPosicion(meters.filter(esVelocidad));
+  const velocidades = ordenarPorPosicion(meters.filter(esVelocidad)).slice(
+    0,
+    3
+  );
   const temperatura = meters.find((m) => categoriaDeMedidor(m) === "temp");
 
-  function valorMostrado(m: Meter): string {
+  function valor(m: Meter | undefined): string {
+    if (!m) return "—";
     const prom = promedios[m.id];
     if (!prom) return "—";
-    return esVelocidad(m)
-      ? `${mmsAIns(prom.avg)} in/s`
-      : `${prom.avg} ${m.units_code}`;
+    return esVelocidad(m) ? mmsAIns(prom.avg) : String(prom.avg);
   }
 
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full rounded-xl border bg-white p-4 text-left transition ${
-        activo ? "border-brand ring-2 ring-brand/30" : "border-slate-200"
-      }`}
-    >
-      <p className="text-sm font-semibold text-slate-800">
-        {codigo}
-        {etiqueta && (
-          <span className="ml-2 font-normal text-slate-500">{etiqueta}</span>
-        )}
-      </p>
+  // Ancla el recuadro hacia el lado contrario del borde más cercano para
+  // que se salga lo menos posible de la imagen.
+  const haciaIzquierda = sensor.pos_x > 65;
+  const haciaArriba = sensor.pos_y > 75;
 
-      {cargando ? (
-        <p className="mt-2 text-xs text-slate-400">Cargando…</p>
-      ) : !grupo ? (
-        <p className="mt-2 text-xs text-slate-400">
-          Sin datos de Fracttal para este sensor.
+  return (
+    <>
+      {/* Punto exacto */}
+      <div
+        style={{ left: `${sensor.pos_x}%`, top: `${sensor.pos_y}%` }}
+        className="absolute z-10 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-brand shadow"
+      />
+      {/* Recuadro de indicadores, siempre visible */}
+      <div
+        style={{
+          left: `${sensor.pos_x}%`,
+          top: `${sensor.pos_y}%`,
+          transform: `translate(${
+            haciaIzquierda ? "calc(-100% - 10px)" : "10px"
+          }, ${haciaArriba ? "calc(-100% - 6px)" : "6px"})`,
+        }}
+        className="absolute z-20 w-max rounded-md bg-slate-900/90 px-2 py-1 text-[10px] leading-tight text-white shadow-lg"
+      >
+        <p className="mb-0.5 font-semibold text-slate-200">
+          {sensor.sensor_code}
         </p>
-      ) : (
-        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          {velocidades.length === 0 && (
-            <p className="col-span-2 text-slate-400">Sin medidores de velocidad.</p>
-          )}
-          {velocidades.map((m) => (
-            <div key={m.id} className="rounded-lg bg-slate-50 px-2 py-1.5">
-              <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                {posicionDeMedidor(m)}
-              </p>
-              <p className="font-semibold text-slate-700">{valorMostrado(m)}</p>
-            </div>
-          ))}
-          <div className="rounded-lg bg-slate-50 px-2 py-1.5">
-            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-              Temperatura
-            </p>
-            <p className="font-semibold text-slate-700">
-              {temperatura ? valorMostrado(temperatura) : "—"}
-            </p>
+        {cargando ? (
+          <p className="text-slate-400">Cargando…</p>
+        ) : !grupo ? (
+          <p className="text-slate-400">Sin datos</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+            <span>
+              <span className="text-slate-400">H</span> {valor(velocidades[0])}
+            </span>
+            <span>
+              <span className="text-slate-400">V</span> {valor(velocidades[1])}
+            </span>
+            <span>
+              <span className="text-slate-400">A</span> {valor(velocidades[2])}
+            </span>
+            <span>
+              <span className="text-slate-400">T</span> {valor(temperatura)}°
+            </span>
           </div>
-        </div>
-      )}
-    </button>
+        )}
+      </div>
+    </>
   );
 }

@@ -183,6 +183,23 @@ export default function NuevoInforme() {
     });
   }
 
+  /** Marca o desmarca de golpe TODOS los medidores de una categoría
+   *  (velocidad / aceleración / temperatura) en todos los sensores */
+  function toggleCategoria(cat: "vel" | "acel" | "temp" | "todos") {
+    setExcluidos((prev) => {
+      const next = new Set(prev);
+      const medidores = gruposSeleccionados.flatMap((g) =>
+        g.meters.filter((m) => cat === "todos" || categoriaDeMedidor(m) === cat)
+      );
+      const todosIncluidos = medidores.every((m) => !next.has(m.serial));
+      for (const m of medidores) {
+        if (todosIncluidos) next.add(m.serial);
+        else next.delete(m.serial);
+      }
+      return next;
+    });
+  }
+
   /** Marca o desmarca todos los medidores de un sensor */
   function toggleGrupoMedidores(g: SensorGroup) {
     setExcluidos((prev) => {
@@ -611,6 +628,46 @@ export default function NuevoInforme() {
             automáticamente de mm/s (dato crudo de Fracttal) a in/s (÷ 25.4).
           </p>
 
+          {/* Barra de selección rápida por categoría */}
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Marcar / desmarcar en un clic:
+            </span>
+            {(
+              [
+                ["todos", "Todos"],
+                ["vel", "Velocidades (in/s)"],
+                ["acel", "Aceleraciones (g)"],
+                ["temp", "Temperaturas (°C)"],
+              ] as const
+            ).map(([cat, etiqueta]) => {
+              const medidores = gruposSeleccionados.flatMap((g) =>
+                g.meters.filter(
+                  (m) => cat === "todos" || categoriaDeMedidor(m) === cat
+                )
+              );
+              const incluidos = medidores.filter(
+                (m) => !excluidos.has(m.serial)
+              ).length;
+              const activo = incluidos === medidores.length && medidores.length > 0;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => toggleCategoria(cat)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    activo
+                      ? "border-brand bg-brand text-white"
+                      : incluidos > 0
+                        ? "border-brand bg-brand/10 text-brand"
+                        : "border-slate-300 bg-white text-slate-500"
+                  }`}
+                >
+                  {etiqueta} · {incluidos}/{medidores.length}
+                </button>
+              );
+            })}
+          </div>
+
           {gruposSeleccionados.map((g) => {
             const incluidosGrupo = g.meters.filter(
               (m) => !excluidos.has(m.serial)
@@ -974,6 +1031,14 @@ export default function NuevoInforme() {
       )}
     </div>
   );
+}
+
+/** Categoría del medidor: velocidad, aceleración o temperatura */
+function categoriaDeMedidor(m: Meter): "vel" | "acel" | "temp" {
+  if (esVelocidad(m)) return "vel";
+  if (m.units_code === "g" || m.serial.toLowerCase().includes("accel"))
+    return "acel";
+  return "temp";
 }
 
 /** ¿El medidor es de velocidad? (por unidad o por serial tipo CLC_velX) */

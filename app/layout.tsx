@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import NavTabs from "@/components/NavTabs";
 
 export const metadata: Metadata = {
   title: "Informe de Condición — ArcelorMittal",
@@ -22,6 +23,7 @@ export default function RootLayout({
               ArcelorMittal · Fracttal API
             </span>
           </div>
+          <NavTabs />
         </header>
         <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
       </body>

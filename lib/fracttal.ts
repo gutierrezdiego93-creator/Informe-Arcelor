@@ -352,3 +352,61 @@ export async function getSensorsForAsset(
 
   return [...groups.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
+
+// ---------- Clasificación y orden de medidores ----------
+// (compartido por el wizard de informes y la vista de Activos monitoreados)
+
+/** ¿El medidor es de velocidad? (por unidad o por serial tipo CLC_velX) */
+export function esVelocidad(m: Meter): boolean {
+  return (
+    m.units_code === "in/s" ||
+    m.units_code === "mm/s" ||
+    m.serial.toLowerCase().includes("vel")
+  );
+}
+
+/** Categoría del medidor: velocidad, aceleración o temperatura */
+export function categoriaDeMedidor(m: Meter): "vel" | "acel" | "temp" {
+  if (esVelocidad(m)) return "vel";
+  if (m.units_code === "g" || m.serial.toLowerCase().includes("accel"))
+    return "acel";
+  return "temp";
+}
+
+/** Convierte mm/s (dato crudo de Fracttal) a in/s. 1 in = 25.4 mm */
+export function mmsAIns(mms: number): string {
+  const ins = mms / 25.4;
+  // 4 decimales máximo, sin ceros de sobra (ej. 4.48 → 0.1764)
+  return String(Number(ins.toFixed(4)));
+}
+
+/** Posición del punto: extrae "Horizontal/Vertical/Axial" de la descripción */
+export function posicionDeMedidor(m: Meter): string {
+  const match = m.description.match(/\((.+?)\)/);
+  if (match) return match[1];
+  const s = m.serial.toLowerCase();
+  if (s.endsWith("x")) return "X";
+  if (s.endsWith("y")) return "Y";
+  if (s.endsWith("z")) return "Z";
+  return m.description;
+}
+
+/** Orden fijo del informe: Horizontal → Vertical → Axial */
+export function ordenarPorPosicion(meters: Meter[]): Meter[] {
+  const peso = (m: Meter) => {
+    const p = posicionDeMedidor(m).toLowerCase();
+    if (p.startsWith("h")) return 0; // Horizontal
+    if (p.startsWith("v")) return 1; // Vertical
+    return 2; // Axial (o cualquier otra)
+  };
+  return [...meters].sort((a, b) => peso(a) - peso(b));
+}
+
+/** Velocidades primero (como en el informe), luego aceleraciones y temperatura */
+export function ordenarMedidores(meters: Meter[]): Meter[] {
+  const peso = (m: Meter) =>
+    m.units_code === "in/s" ? 0 : m.units_code === "g" ? 1 : 2;
+  return [...meters].sort(
+    (a, b) => peso(a) - peso(b) || a.description.localeCompare(b.description)
+  );
+}

@@ -101,3 +101,116 @@ export async function eliminarInforme(id: number): Promise<void> {
   await asegurarEsquema();
   await sql`DELETE FROM informes WHERE id = ${id}`;
 }
+
+// ---------- Activos monitoreados (imagen + sensores posicionados) ----------
+
+export interface ActivoMonitoreadoResumen {
+  activo_code: string;
+  activo_nombre: string | null;
+  imagen_url: string | null;
+  num_sensores: number;
+  updated_at: string;
+}
+
+export interface SensorPosicionado {
+  id: number;
+  sensor_code: string;
+  sensor_label: string | null;
+  pos_x: number;
+  pos_y: number;
+}
+
+export interface ActivoMonitoreadoDetalle {
+  activo_code: string;
+  activo_nombre: string | null;
+  imagen_url: string | null;
+  sensores: SensorPosicionado[];
+}
+
+/** Lista los activos ya configurados como "digital twin", más recientes primero. */
+export async function listarActivosMonitoreados(): Promise<
+  ActivoMonitoreadoResumen[]
+> {
+  await asegurarEsquema();
+  const { rows } = await sql<ActivoMonitoreadoResumen>`
+    SELECT
+      c.activo_code,
+      c.activo_nombre,
+      c.imagen_url,
+      c.updated_at,
+      COUNT(s.id)::int AS num_sensores
+    FROM activos_config c
+    LEFT JOIN sensores_posicionados s ON s.activo_code = c.activo_code
+    GROUP BY c.activo_code, c.activo_nombre, c.imagen_url, c.updated_at
+    ORDER BY c.updated_at DESC
+  `;
+  return rows;
+}
+
+/** Trae la configuración (imagen + posiciones) de un activo, o null si no existe. */
+export async function obtenerActivoMonitoreado(
+  activoCode: string
+): Promise<ActivoMonitoreadoDetalle | null> {
+  await asegurarEsquema();
+  const { rows: configRows } = await sql`
+    SELECT activo_code, activo_nombre, imagen_url
+    FROM activos_config
+    WHERE activo_code = ${activoCode}
+  `;
+  if (configRows.length === 0) return null;
+
+  const { rows: sensorRows } = await sql<SensorPosicionado>`
+    SELECT id, sensor_code, sensor_label, pos_x, pos_y
+    FROM sensores_posicionados
+    WHERE activo_code = ${activoCode}
+    ORDER BY id ASC
+  `;
+
+  return {
+    activo_code: configRows[0].activo_code,
+    activo_nombre: configRows[0].activo_nombre,
+    imagen_url: configRows[0].imagen_url,
+    sensores: sensorRows,
+  };
+}
+
+/** Crea o actualiza la imagen/nombre de un activo monitoreado (upsert). */
+export async function guardarActivoConfig(
+  activoCode: string,
+  activoNombre: string,
+  imagenUrl: string
+): Promise<void> {
+  await asegurarEsquema();
+  await sql`
+    INSERT INTO activos_config (activo_code, activo_nombre, imagen_url, updated_at)
+    VALUES (${activoCode}, ${activoNombre}, ${imagenUrl}, now())
+    ON CONFLICT (activo_code) DO UPDATE
+    SET activo_nombre = EXCLUDED.activo_nombre,
+        imagen_url = EXCLUDED.imagen_url,
+        updated_at = now()
+  `;
+}
+
+/** Reemplaza por completo las posiciones de sensores de un activo. */
+export async function reemplazarPosicionesSensores(
+  activoCode: string,
+  posiciones: { sensorCode: string; sensorLabel: string; x: number; y: number }[]
+): Promise<void> {
+  await asegurarEsquema();
+  await sql`DELETE FROM sensores_posicionados WHERE activo_code = ${activoCode}`;
+  for (const p of posiciones) {
+    await sql`
+      INSERT INTO sensores_posicionados
+        (activo_code, sensor_code, sensor_label, pos_x, pos_y)
+      VALUES (${activoCode}, ${p.sensorCode}, ${p.sensorLabel}, ${p.x}, ${p.y})
+    `;
+  }
+}
+
+/** Elimina un activo monitoreado (y en cascada sus posiciones de sensores). */
+export async function eliminarActivoMonitoreado(
+  activoCode: string
+): Promise<void> {
+  await asegurarEsquema();
+  await sql`DELETE FROM activos_config WHERE activo_code = ${activoCode}`;
+}

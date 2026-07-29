@@ -4,7 +4,15 @@
 // Paso 1: activo y sensores · Paso 2: datos de inspección · Paso 3: valores
 // Paso 4: diagnóstico y recomendaciones por sensor
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Asset, Meter, SensorGroup } from "@/lib/fracttal";
+import type { Asset, SensorGroup } from "@/lib/fracttal";
+import {
+  esVelocidad,
+  categoriaDeMedidor,
+  mmsAIns,
+  posicionDeMedidor,
+  ordenarPorPosicion,
+  ordenarMedidores,
+} from "@/lib/fracttal";
 import type {
   FilaVelocidad,
   InformeData,
@@ -1237,60 +1245,5 @@ export default function NuevoInforme() {
         </>
       )}
     </div>
-  );
-}
-
-/** Categoría del medidor: velocidad, aceleración o temperatura */
-function categoriaDeMedidor(m: Meter): "vel" | "acel" | "temp" {
-  if (esVelocidad(m)) return "vel";
-  if (m.units_code === "g" || m.serial.toLowerCase().includes("accel"))
-    return "acel";
-  return "temp";
-}
-
-/** ¿El medidor es de velocidad? (por unidad o por serial tipo CLC_velX) */
-function esVelocidad(m: Meter): boolean {
-  return (
-    m.units_code === "in/s" ||
-    m.units_code === "mm/s" ||
-    m.serial.toLowerCase().includes("vel")
-  );
-}
-
-/** Convierte mm/s (dato crudo de Fracttal) a in/s. 1 in = 25.4 mm */
-function mmsAIns(mms: number): string {
-  const ins = mms / 25.4;
-  // 4 decimales máximo, sin ceros de sobra (ej. 4.48 → 0.1764)
-  return String(Number(ins.toFixed(4)));
-}
-
-/** Posición del punto: extrae "Horizontal/Vertical/Axial" de la descripción */
-function posicionDeMedidor(m: Meter): string {
-  const match = m.description.match(/\((.+?)\)/);
-  if (match) return match[1];
-  const s = m.serial.toLowerCase();
-  if (s.endsWith("x")) return "X";
-  if (s.endsWith("y")) return "Y";
-  if (s.endsWith("z")) return "Z";
-  return m.description;
-}
-
-/** Orden fijo del informe: Horizontal → Vertical → Axial */
-function ordenarPorPosicion(meters: Meter[]): Meter[] {
-  const peso = (m: Meter) => {
-    const p = posicionDeMedidor(m).toLowerCase();
-    if (p.startsWith("h")) return 0; // Horizontal
-    if (p.startsWith("v")) return 1; // Vertical
-    return 2; // Axial (o cualquier otra)
-  };
-  return [...meters].sort((a, b) => peso(a) - peso(b));
-}
-
-/** Velocidades primero (como en el informe), luego aceleraciones y temperatura */
-function ordenarMedidores(meters: Meter[]): Meter[] {
-  const peso = (m: Meter) =>
-    m.units_code === "in/s" ? 0 : m.units_code === "g" ? 1 : 2;
-  return [...meters].sort(
-    (a, b) => peso(a) - peso(b) || a.description.localeCompare(b.description)
   );
 }

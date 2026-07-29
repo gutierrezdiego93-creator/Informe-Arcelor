@@ -5,6 +5,11 @@
 // Paso 4: diagnóstico y recomendaciones por sensor
 import { useEffect, useMemo, useState } from "react";
 import type { Asset, Meter, SensorGroup } from "@/lib/fracttal";
+import type {
+  FilaVelocidad,
+  InformeData,
+  OtroValor,
+} from "@/components/InformePDF";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
 
@@ -282,10 +287,90 @@ export default function NuevoInforme() {
     );
   }
 
-  function finalizarBorrador() {
-    alert(
-      "¡Informe capturado completo! El siguiente cambio agrega la vista previa y la generación del PDF/Word."
-    );
+  /** Reúne todo lo capturado en la estructura que consume el PDF */
+  function construirDatosInforme(): InformeData {
+    const filasVelocidad: FilaVelocidad[] = [];
+    const otrosValores: OtroValor[] = [];
+    let peor: Nivel = "NORMAL";
+    const pesoNivel = { NORMAL: 0, ALERTA: 1, CRÍTICO: 2 } as const;
+
+    for (const g of gruposSeleccionados) {
+      const velocidades = ordenarPorPosicion(
+        g.meters.filter((m) => esVelocidad(m) && !excluidos.has(m.serial))
+      );
+      velocidades.forEach((m, i) => {
+        const v = parseFloat(valores[m.serial] ?? "");
+        const nivel = isNaN(v) ? null : nivelPorVelocidad(v);
+        if (nivel && pesoNivel[nivel] > pesoNivel[peor]) peor = nivel;
+        filasVelocidad.push({
+          sensor: g.code,
+          sensorDesc: g.description,
+          posicion: posicionDeMedidor(m),
+          valor: isNaN(v) ? null : v,
+          nivel,
+          primeraDelGrupo: i === 0,
+          filasDelGrupo: velocidades.length,
+        });
+      });
+      for (const m of ordenarMedidores(g.meters)) {
+        if (esVelocidad(m) || excluidos.has(m.serial)) continue;
+        otrosValores.push({
+          sensor: g.code,
+          medidor: m.description,
+          valor: valores[m.serial] ?? "",
+          unidad: m.units_code,
+        });
+      }
+    }
+
+    return {
+      activo: {
+        nombre: activoSel?.field_1 ?? activoSel?.description ?? "",
+        codigo: activoSel?.code ?? "",
+        fabricante: activoSel?.field_2 ?? undefined,
+        modelo: activoSel?.field_3 ?? undefined,
+      },
+      semana: datos.semana,
+      fecha: datos.fecha,
+      area: datos.area,
+      analista: datos.analista,
+      condicionOperacion: datos.condicionOperacion,
+      nivelGeneral: peor,
+      observaciones: datos.observaciones,
+      filasVelocidad,
+      otrosValores,
+      diagnostico: diagnosticoGeneral,
+      recomendaciones: recomendacionesGeneral,
+      evidencias,
+    };
+  }
+
+  const [generandoPDF, setGenerandoPDF] = useState(false);
+
+  async function generarPDF() {
+    setGenerandoPDF(true);
+    try {
+      // Import dinámico: la librería solo se descarga al generar el PDF
+      const [{ pdf }, { InformePDF }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("@/components/InformePDF"),
+      ]);
+      const data = construirDatosInforme();
+      const blob = await pdf(<InformePDF data={data} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Reporte_Condicion_${data.activo.codigo}_Semana_${data.semana}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(
+        "No se pudo generar el PDF: " +
+          (err instanceof Error ? err.message : "error desconocido")
+      );
+    } finally {
+      setGenerandoPDF(false);
+    }
   }
 
   // ---------- Render ----------
@@ -1023,10 +1108,11 @@ export default function NuevoInforme() {
               ← Paso 4
             </button>
             <button
-              onClick={finalizarBorrador}
-              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90"
+              onClick={generarPDF}
+              disabled={generandoPDF}
+              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
-              Finalizar informe →
+              {generandoPDF ? "Generando PDF…" : "⬇ Generar PDF del informe"}
             </button>
           </div>
         </>

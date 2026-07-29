@@ -50,6 +50,17 @@ export function asegurarEsquema(): Promise<void> {
           created_at TIMESTAMPTZ DEFAULT now()
         )
       `;
+      // Posición personalizada de la etiqueta de valores (H/V/A/T) cuando el
+      // ingeniero la arrastra para separarla del punto; null = posición
+      // automática (pegada al punto).
+      await sql`
+        ALTER TABLE sensores_posicionados
+        ADD COLUMN IF NOT EXISTS etiqueta_pos_x REAL
+      `;
+      await sql`
+        ALTER TABLE sensores_posicionados
+        ADD COLUMN IF NOT EXISTS etiqueta_pos_y REAL
+      `;
     })();
   }
   return esquemaListo;
@@ -118,6 +129,8 @@ export interface SensorPosicionado {
   sensor_label: string | null;
   pos_x: number;
   pos_y: number;
+  etiqueta_pos_x: number | null;
+  etiqueta_pos_y: number | null;
 }
 
 export interface ActivoMonitoreadoDetalle {
@@ -160,7 +173,7 @@ export async function obtenerActivoMonitoreado(
   if (configRows.length === 0) return null;
 
   const { rows: sensorRows } = await sql<SensorPosicionado>`
-    SELECT id, sensor_code, sensor_label, pos_x, pos_y
+    SELECT id, sensor_code, sensor_label, pos_x, pos_y, etiqueta_pos_x, etiqueta_pos_y
     FROM sensores_posicionados
     WHERE activo_code = ${activoCode}
     ORDER BY id ASC
@@ -203,6 +216,22 @@ export async function reemplazarPosicionesSensores(
       INSERT INTO sensores_posicionados
         (activo_code, sensor_code, sensor_label, pos_x, pos_y)
       VALUES (${activoCode}, ${p.sensorCode}, ${p.sensorLabel}, ${p.x}, ${p.y})
+    `;
+  }
+}
+
+/** Guarda la posición personalizada (arrastrada) de una o más etiquetas de
+ *  valores. `x`/`y` son porcentajes relativos a la imagen, igual que pos_x/pos_y. */
+export async function actualizarPosicionesEtiquetas(
+  activoCode: string,
+  etiquetas: { id: number; x: number; y: number }[]
+): Promise<void> {
+  await asegurarEsquema();
+  for (const e of etiquetas) {
+    await sql`
+      UPDATE sensores_posicionados
+      SET etiqueta_pos_x = ${e.x}, etiqueta_pos_y = ${e.y}
+      WHERE id = ${e.id} AND activo_code = ${activoCode}
     `;
   }
 }

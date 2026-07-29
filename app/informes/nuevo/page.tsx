@@ -10,6 +10,7 @@ import type {
   InformeData,
   OtroValor,
 } from "@/components/InformePDF";
+import RichTextEditor from "@/components/RichTextEditor";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
 
@@ -98,14 +99,16 @@ function claseNivel(n: Nivel): string {
   return "bg-red-600 text-white";
 }
 
-/** Bloque de evidencia (paso 5): hasta 2 fotos de espectro + comentario */
+/** Bloque de evidencia (paso 5): hasta 3 fotos de espectro + diagnóstico */
 interface Evidencia {
   fotos: string[]; // data URLs (base64)
-  comentario: string;
+  comentario: string; // HTML (texto enriquecido): diagnóstico de este espectro
 }
 
+const MAX_FOTOS_POR_BLOQUE = 3;
+
 export default function NuevoInforme() {
-  const [paso, setPaso] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [paso, setPaso] = useState<1 | 2 | 3 | 4 | 5 | 6>(1);
 
   // --- Paso 1: activos y sensores ---
   const [activos, setActivos] = useState<Asset[]>([]);
@@ -140,14 +143,13 @@ export default function NuevoInforme() {
   >({});
   const [calculandoProm, setCalculandoProm] = useState(false);
 
-  // --- Paso 4: diagnóstico y recomendaciones GENERALES del informe ---
-  const [diagnosticoGeneral, setDiagnosticoGeneral] = useState("");
-  const [recomendacionesGeneral, setRecomendacionesGeneral] = useState("");
-
   // --- Paso 5: evidencias (espectros) ---
   const [evidencias, setEvidencias] = useState<Evidencia[]>([
     { fotos: [], comentario: "" },
   ]);
+
+  // --- Paso 6: recomendaciones GENERALES (cierre del informe) ---
+  const [recomendacionesGeneral, setRecomendacionesGeneral] = useState("");
 
   const cargarActivos = useCallback(async () => {
     setEstadoActivos("cargando");
@@ -329,7 +331,7 @@ export default function NuevoInforme() {
       const dataUrl = reader.result as string;
       setEvidencias((prev) =>
         prev.map((ev, i) =>
-          i === idxBloque && ev.fotos.length < 2
+          i === idxBloque && ev.fotos.length < MAX_FOTOS_POR_BLOQUE
             ? { ...ev, fotos: [...ev.fotos, dataUrl] }
             : ev
         )
@@ -408,7 +410,6 @@ export default function NuevoInforme() {
       observaciones: datos.observaciones,
       filasVelocidad,
       otrosValores,
-      diagnostico: diagnosticoGeneral,
       recomendaciones: recomendacionesGeneral,
       evidencias,
     };
@@ -451,14 +452,15 @@ export default function NuevoInforme() {
   const encabezado = (
     <div>
       <p className="text-xs font-medium uppercase tracking-wide text-brand">
-        Paso {paso} de 7
+        Paso {paso} de 6
       </p>
       <h2 className="text-xl font-semibold">
         {paso === 1 && "Activo y sensores"}
         {paso === 2 && "Datos de inspección"}
         {paso === 3 && "Valores de vibración"}
-        {paso === 4 && "Diagnóstico y recomendaciones"}
+        {paso === 4 && "Cuadro de condición"}
         {paso === 5 && "Evidencias · Espectros"}
+        {paso === 6 && "Recomendaciones"}
       </h2>
       {activoSel && paso > 1 && (
         <p className="mt-1 text-sm text-slate-600">
@@ -753,14 +755,13 @@ export default function NuevoInforme() {
               <label className="mb-1 block text-sm font-medium">
                 Observaciones generales
               </label>
-              <textarea
+              <RichTextEditor
                 value={datos.observaciones}
-                onChange={(e) =>
-                  setDatos((d) => ({ ...d, observaciones: e.target.value }))
+                onChange={(html) =>
+                  setDatos((d) => ({ ...d, observaciones: html }))
                 }
-                rows={4}
+                minRows={4}
                 placeholder="Comportamiento observado, cambios respecto a la semana anterior…"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
               />
             </div>
           </div>
@@ -1059,34 +1060,6 @@ export default function NuevoInforme() {
             </table>
           </div>
 
-          {/* Diagnóstico y recomendaciones GENERALES */}
-          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-6 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Diagnóstico general
-              </label>
-              <textarea
-                value={diagnosticoGeneral}
-                onChange={(e) => setDiagnosticoGeneral(e.target.value)}
-                rows={5}
-                placeholder="Ej. Los puntos 3, 4 y 9 presentan niveles críticos de vibración. Se observa incremento respecto a la semana anterior…"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Recomendaciones generales
-              </label>
-              <textarea
-                value={recomendacionesGeneral}
-                onChange={(e) => setRecomendacionesGeneral(e.target.value)}
-                rows={5}
-                placeholder="Ej. Programar inspección de rodamientos del reductor. Continuar monitoreo semanal…"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
-              />
-            </div>
-          </div>
-
           <div className="flex justify-between border-t border-slate-200 pt-4">
             <button
               onClick={() => setPaso(3)}
@@ -1109,8 +1082,8 @@ export default function NuevoInforme() {
         <>
           <p className="text-sm text-slate-600">
             Sube las capturas de los <strong>espectros</strong> del colector
-            (hasta 2 fotos por bloque) y escribe abajo el comentario o
-            recomendación de ese análisis, como en el informe original. Puedes
+            (1, 2 o 3 fotos por bloque, a tu elección) y escribe abajo el
+            diagnóstico de ese análisis, como en el informe original. Puedes
             agregar más bloques si documentas varios puntos.
           </p>
 
@@ -1139,7 +1112,7 @@ export default function NuevoInforme() {
                 {ev.fotos.map((foto, j) => (
                   <div
                     key={j}
-                    className="relative overflow-hidden rounded-lg border border-slate-200"
+                    className="relative overflow-hidden rounded-lg border-2 border-slate-300 bg-white p-1 shadow-sm"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -1155,11 +1128,11 @@ export default function NuevoInforme() {
                     </button>
                   </div>
                 ))}
-                {ev.fotos.length < 2 && (
+                {ev.fotos.length < MAX_FOTOS_POR_BLOQUE && (
                   <label className="flex h-40 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 text-sm text-slate-500 hover:border-brand hover:text-brand">
                     <span className="text-2xl">+</span>
                     <span>
-                      Subir foto {ev.fotos.length + 1} de 2 (espectro)
+                      Subir foto {ev.fotos.length + 1} de {MAX_FOTOS_POR_BLOQUE} (espectro)
                     </span>
                     <input
                       type="file"
@@ -1177,14 +1150,13 @@ export default function NuevoInforme() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium">
-                  Comentario / recomendación del espectro
+                  Diagnóstico de este espectro
                 </label>
-                <textarea
+                <RichTextEditor
                   value={ev.comentario}
-                  onChange={(e) => setComentario(i, e.target.value)}
-                  rows={3}
+                  onChange={(html) => setComentario(i, html)}
+                  minRows={3}
                   placeholder="Ej. El análisis orbital confirma la desalineación entre piñón y corona (se refleja el 2xGM). Dar seguimiento…"
-                  className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
@@ -1205,6 +1177,42 @@ export default function NuevoInforme() {
               className="rounded-lg border border-slate-300 px-6 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               ← Paso 4
+            </button>
+            <button
+              onClick={() => setPaso(6)}
+              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Continuar → Paso 6
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ================= PASO 6 ================= */}
+      {paso === 6 && (
+        <>
+          <div>
+            <h3 className="mb-1 font-semibold">Recomendaciones</h3>
+            <p className="text-sm text-slate-600">
+              Escribe las recomendaciones finales del informe (mantenimiento,
+              seguimiento, repuestos, plazos, etc.). Con esto se cierra el
+              reporte de condición.
+            </p>
+          </div>
+
+          <RichTextEditor
+            value={recomendacionesGeneral}
+            onChange={setRecomendacionesGeneral}
+            minRows={6}
+            placeholder="Ej. Se recomienda reprogramar el balanceo del ventilador en la próxima parada y verificar el estado de los rodamientos en 30 días…"
+          />
+
+          <div className="flex justify-between border-t border-slate-200 pt-4">
+            <button
+              onClick={() => setPaso(5)}
+              className="rounded-lg border border-slate-300 px-6 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              ← Paso 5
             </button>
             <button
               onClick={generarPDF}

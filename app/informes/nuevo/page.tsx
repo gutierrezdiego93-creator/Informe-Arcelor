@@ -820,8 +820,10 @@ export default function NuevoInforme() {
               </thead>
               <tbody>
                 {gruposSeleccionados.map((g) => {
-                  const velocidades = ordenarMedidores(g.meters).filter(
-                    (m) => esVelocidad(m) && !excluidos.has(m.serial)
+                  const velocidades = ordenarPorPosicion(
+                    g.meters.filter(
+                      (m) => esVelocidad(m) && !excluidos.has(m.serial)
+                    )
                   );
                   if (velocidades.length === 0) return null;
                   return velocidades.map((m, i) => {
@@ -1066,6 +1068,17 @@ function posicionDeMedidor(m: Meter): string {
   if (s.endsWith("y")) return "Y";
   if (s.endsWith("z")) return "Z";
   return m.description;
+}
+
+/** Orden fijo del informe: Horizontal → Vertical → Axial */
+function ordenarPorPosicion(meters: Meter[]): Meter[] {
+  const peso = (m: Meter) => {
+    const p = posicionDeMedidor(m).toLowerCase();
+    if (p.startsWith("h")) return 0; // Horizontal
+    if (p.startsWith("v")) return 1; // Vertical
+    return 2; // Axial (o cualquier otra)
+  };
+  return [...meters].sort((a, b) => peso(a) - peso(b));
 }
 
 /** Velocidades primero (como en el informe), luego aceleraciones y temperatura */

@@ -97,6 +97,11 @@ export default function NuevoInforme() {
   const [valores, setValores] = useState<Record<string, string>>({});
   // Medidores EXCLUIDOS del informe (todos incluidos por defecto)
   const [excluidos, setExcluidos] = useState<Set<string>>(new Set());
+  // Promedio de las últimas 10 lecturas por medidor (clave = id del medidor)
+  const [promedios, setPromedios] = useState<
+    Record<number, { avg: number; count: number; min: number; max: number }>
+  >({});
+  const [calculandoProm, setCalculandoProm] = useState(false);
 
   // --- Paso 4: diagnóstico y recomendaciones GENERALES del informe ---
   const [diagnosticoGeneral, setDiagnosticoGeneral] = useState("");
@@ -228,24 +233,50 @@ export default function NuevoInforme() {
     [gruposSeleccionados, excluidos]
   );
 
-  function irAPaso3() {
-    // Precargar valores desde la última lectura de cada medidor.
-    // Las VELOCIDADES llegan de Fracttal en mm/s: convertir a in/s (÷ 25.4).
+  async function irAPaso3() {
+    // 1) Pedir a Fracttal las últimas 10 lecturas de cada medidor (por sensor)
+    //    y calcular el promedio para un valor más representativo.
+    setCalculandoProm(true);
+    const prom: Record<
+      number,
+      { avg: number; count: number; min: number; max: number }
+    > = {};
+    try {
+      await Promise.all(
+        gruposSeleccionados.map(async (g) => {
+          const res = await fetch(
+            `/api/fracttal/averages?code=${encodeURIComponent(g.code)}&n=10`
+          );
+          const json = await res.json();
+          if (res.ok && json.success) Object.assign(prom, json.data);
+        })
+      );
+    } catch {
+      // sin promedios: se usa la última lectura como respaldo
+    }
+    setPromedios(prom);
+
+    // 2) Precargar valores: promedio si existe, si no la última lectura.
+    //    Las VELOCIDADES llegan de Fracttal en mm/s: convertir a in/s (÷ 25.4).
     const iniciales: Record<string, string> = {};
     for (const g of gruposSeleccionados) {
       for (const m of g.meters) {
         if (valores[m.serial] !== undefined) {
           iniciales[m.serial] = valores[m.serial];
-        } else if (m.last_data) {
-          iniciales[m.serial] = esVelocidad(m)
-            ? mmsAIns(m.last_data.value)
-            : String(m.last_data.value);
-        } else {
+          continue;
+        }
+        const base = prom[m.id]?.avg ?? m.last_data?.value;
+        if (base === undefined) {
           iniciales[m.serial] = "";
+        } else {
+          iniciales[m.serial] = esVelocidad(m)
+            ? mmsAIns(base)
+            : String(Number(base.toFixed(4)));
         }
       }
     }
     setValores(iniciales);
+    setCalculandoProm(false);
     setPaso(3);
   }
 
@@ -692,10 +723,12 @@ export default function NuevoInforme() {
             </button>
             <button
               onClick={irAPaso3}
-              disabled={!datos.fecha || !datos.analista.trim()}
+              disabled={!datos.fecha || !datos.analista.trim() || calculandoProm}
               className="rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
-              Continuar → Paso 3
+              {calculandoProm
+                ? "Calculando promedios de Fracttal…"
+                : "Continuar → Paso 3"}
             </button>
           </div>
           {!datos.analista.trim() && (
@@ -710,10 +743,10 @@ export default function NuevoInforme() {
       {paso === 3 && (
         <>
           <p className="text-sm text-slate-600">
-            Marca los medidores que entrarán en el informe (valores
-            precargados con la <strong>última lectura</strong> de Fracttal;
-            puedes ajustarlos si tomaste una medición más reciente con el
-            colector). Las <strong>velocidades</strong> se convierten
+            Marca los medidores que entrarán en el informe. Los valores vienen
+            precargados con el <strong>promedio de las últimas 10 lecturas</strong>{" "}
+            de Fracttal (puedes ajustarlos si tomaste una medición más reciente
+            con el colector). Las <strong>velocidades</strong> se convierten
             automáticamente de mm/s (dato crudo de Fracttal) a in/s (÷ 25.4).
           </p>
 
@@ -792,7 +825,7 @@ export default function NuevoInforme() {
                       <th className="px-4 py-2">Medidor</th>
                       <th className="px-4 py-2">Valor</th>
                       <th className="px-4 py-2">Unidad</th>
-                      <th className="px-4 py-2">Última lectura</th>
+                      <th className="px-4 py-2">Dato de Fracttal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -831,8 +864,19 @@ export default function NuevoInforme() {
                             {m.units_code}
                           </td>
                           <td className="px-4 py-2 text-xs text-slate-400">
-                            {m.last_data ? (
+                            {promedios[m.id] ? (
                               <>
+                                <span className="font-medium text-slate-500">
+                                  Prom. de {promedios[m.id].count} lecturas
+                                </span>
+                                <span className="block text-slate-300">
+                                  {promedios[m.id].min} – {promedios[m.id].max}{" "}
+                                  {esVelocidad(m) ? "mm/s en Fracttal" : m.units_code}
+                                </span>
+                              </>
+                            ) : m.last_data ? (
+                              <>
+                                Última:{" "}
                                 {new Date(m.last_data.date).toLocaleString(
                                   "es-MX"
                                 )}

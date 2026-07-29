@@ -362,7 +362,11 @@ export default function NuevoInforme() {
       a.href = url;
       a.download = `Reporte_Condicion_${data.activo.codigo}_Semana_${data.semana}.pdf`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Dar tiempo a que inicie la descarga y volver al inicio para un nuevo informe
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        window.location.href = "/";
+      }, 1500);
     } catch (err) {
       alert(
         "No se pudo generar el PDF: " +

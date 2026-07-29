@@ -129,7 +129,8 @@ function htmlABloquesPdf(html: string): ReactNode[] {
       if (child.nodeType === Node.TEXT_NODE) {
         if (child.textContent) {
           runs.push(
-            <Text key={`run-${claveHtml++}`} style={estiloDesdeAncestros(child)}>
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            <Text key={`run-${claveHtml++}`} style={estiloDesdeAncestros(child) as any}>
               {child.textContent}
             </Text>
           );

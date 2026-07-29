@@ -1,6 +1,11 @@
 import Link from "next/link";
+import { listarInformes } from "@/lib/db";
+import ListaInformes from "@/components/ListaInformes";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const informes = await listarInformes().catch(() => []);
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-slate-200 bg-white p-6">
@@ -22,10 +27,7 @@ export default function Home() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-6">
         <h3 className="font-semibold">Informes anteriores</h3>
-        <p className="mt-2 text-sm text-slate-500">
-          El historial estará disponible cuando se conecte la base de datos
-          (Fase 2).
-        </p>
+        <ListaInformes informesIniciales={informes} />
       </section>
     </div>
   );

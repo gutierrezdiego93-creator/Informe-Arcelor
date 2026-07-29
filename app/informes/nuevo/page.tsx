@@ -432,6 +432,18 @@ export default function NuevoInforme() {
       a.href = url;
       a.download = `Reporte_Condicion_${data.activo.codigo}_Semana_${data.semana}.pdf`;
       a.click();
+
+      // Guarda el informe en el historial (si falla, no interrumpe la descarga)
+      try {
+        await fetch("/api/informes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+      } catch (errGuardado) {
+        console.warn("No se pudo guardar el informe en el historial:", errGuardado);
+      }
+
       // Dar tiempo a que inicie la descarga y volver al inicio para un nuevo informe
       setTimeout(() => {
         URL.revokeObjectURL(url);

@@ -374,10 +374,33 @@ export function categoriaDeMedidor(m: Meter): "vel" | "acel" | "temp" {
 }
 
 /** Convierte mm/s (dato crudo de Fracttal) a in/s. 1 in = 25.4 mm */
-export function mmsAIns(mms: number): string {
-  const ins = mms / 25.4;
+export function mmsAInsNumero(mms: number): number {
   // 4 decimales máximo, sin ceros de sobra (ej. 4.48 → 0.1764)
-  return String(Number(ins.toFixed(4)));
+  return Number((mms / 25.4).toFixed(4));
+}
+
+/** Convierte mm/s (dato crudo de Fracttal) a in/s, como texto para mostrar. */
+export function mmsAIns(mms: number): string {
+  return String(mmsAInsNumero(mms));
+}
+
+// ---------- Niveles de severidad (vista en vivo de Activos monitoreados) ----------
+// Mismos límites de velocidad que el informe manual (en in/s). La
+// temperatura no tiene un límite oficial del informe; se usa un rango
+// definido por Diego para la vista en vivo (rojo desde 70°C).
+
+export type NivelSeveridad = "normal" | "alerta" | "critico";
+
+export function nivelVelocidad(inPorSeg: number): NivelSeveridad {
+  if (inPorSeg < 0.2) return "normal";
+  if (inPorSeg < 0.3) return "alerta";
+  return "critico";
+}
+
+export function nivelTemperatura(celsius: number): NivelSeveridad {
+  if (celsius < 55) return "normal";
+  if (celsius < 70) return "alerta";
+  return "critico";
 }
 
 /** Posición del punto: extrae "Horizontal/Vertical/Axial" de la descripción */

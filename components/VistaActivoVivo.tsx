@@ -12,9 +12,20 @@ import type { Meter, SensorGroup } from "@/lib/fracttal";
 import {
   esVelocidad,
   categoriaDeMedidor,
-  mmsAIns,
+  mmsAInsNumero,
+  nivelVelocidad,
+  nivelTemperatura,
   ordenarPorPosicion,
+  type NivelSeveridad,
 } from "@/lib/fracttal";
+
+/** Colores de las pastillas de valor según nivel de severidad. */
+const CLASE_NIVEL: Record<NivelSeveridad, string> = {
+  normal: "bg-[#C0DD97] text-[#173404]",
+  alerta: "bg-[#FAC775] text-[#412402]",
+  critico: "bg-[#F09595] text-[#501313]",
+};
+const CLASE_SIN_DATO = "bg-slate-700 text-slate-300";
 
 interface PromedioMedidor {
   avg: number;
@@ -352,11 +363,27 @@ function IndicadorSensor({
     yPercent: number;
   } | null>(null);
 
-  function valor(m: Meter | undefined): string {
-    if (!m) return "—";
+  /** Texto y nivel de severidad de un medidor de velocidad (H/V/A). */
+  function datoVelocidad(m: Meter | undefined): {
+    texto: string;
+    nivel: NivelSeveridad | null;
+  } {
+    if (!m) return { texto: "—", nivel: null };
     const prom = promedios[m.id];
-    if (!prom) return "—";
-    return esVelocidad(m) ? mmsAIns(prom.avg) : String(prom.avg);
+    if (!prom) return { texto: "—", nivel: null };
+    const enPulgadas = mmsAInsNumero(prom.avg);
+    return { texto: String(enPulgadas), nivel: nivelVelocidad(enPulgadas) };
+  }
+
+  /** Texto y nivel de severidad del medidor de temperatura. */
+  function datoTemperatura(m: Meter | undefined): {
+    texto: string;
+    nivel: NivelSeveridad | null;
+  } {
+    if (!m) return { texto: "—", nivel: null };
+    const prom = promedios[m.id];
+    if (!prom) return { texto: "—", nivel: null };
+    return { texto: String(prom.avg), nivel: nivelTemperatura(prom.avg) };
   }
 
   function manejarPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -425,13 +452,13 @@ function IndicadorSensor({
         onPointerMove={manejarPointerMove}
         onPointerUp={manejarPointerUp}
         onPointerCancel={manejarPointerUp}
-        className={`absolute z-20 w-max select-none rounded-md bg-slate-900/90 px-2 py-1 text-[10px] leading-tight text-white shadow-lg ${
+        className={`absolute z-20 w-max select-none rounded-md bg-slate-900/90 px-2 py-1.5 text-[11px] leading-tight text-white shadow-lg ${
           modoOrganizar
             ? "cursor-grab ring-2 ring-brand/70 active:cursor-grabbing"
             : ""
         }`}
       >
-        <p className="mb-0.5 font-semibold text-slate-200">
+        <p className="mb-1 font-semibold text-slate-200">
           {sensor.sensor_code}
         </p>
         {cargando ? (
@@ -439,22 +466,36 @@ function IndicadorSensor({
         ) : !grupo ? (
           <p className="text-slate-400">Sin datos</p>
         ) : (
-          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
-            <span>
-              <span className="text-slate-400">H</span> {valor(velocidades[0])}
-            </span>
-            <span>
-              <span className="text-slate-400">V</span> {valor(velocidades[1])}
-            </span>
-            <span>
-              <span className="text-slate-400">A</span> {valor(velocidades[2])}
-            </span>
-            <span>
-              <span className="text-slate-400">T</span> {valor(temperatura)}°
-            </span>
+          <div className="grid grid-cols-2 gap-1">
+            <Pastilla etiqueta="H" dato={datoVelocidad(velocidades[0])} />
+            <Pastilla etiqueta="V" dato={datoVelocidad(velocidades[1])} />
+            <Pastilla etiqueta="A" dato={datoVelocidad(velocidades[2])} />
+            <Pastilla
+              etiqueta="T"
+              dato={datoTemperatura(temperatura)}
+              sufijo="°"
+            />
           </div>
         )}
       </div>
     </>
+  );
+}
+
+function Pastilla({
+  etiqueta,
+  dato,
+  sufijo,
+}: {
+  etiqueta: string;
+  dato: { texto: string; nivel: NivelSeveridad | null };
+  sufijo?: string;
+}) {
+  const clase = dato.nivel ? CLASE_NIVEL[dato.nivel] : CLASE_SIN_DATO;
+  return (
+    <span className={`rounded px-1.5 py-0.5 font-medium ${clase}`}>
+      {etiqueta} {dato.texto}
+      {dato.nivel ? sufijo : ""}
+    </span>
   );
 }

@@ -3,7 +3,7 @@
 // Wizard del informe de condición
 // Paso 1: activo y sensores · Paso 2: datos de inspección · Paso 3: valores
 // Paso 4: diagnóstico y recomendaciones por sensor
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Asset, Meter, SensorGroup } from "@/lib/fracttal";
 import type {
   FilaVelocidad,
@@ -12,6 +12,43 @@ import type {
 } from "@/components/InformePDF";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
+
+/**
+ * fetch que tolera fallas temporales de Fracttal/Vercel:
+ * - Reintenta hasta 3 veces (espera 2 s entre intentos).
+ * - Si la respuesta no es JSON (página de error de Vercel), lo trata
+ *   como falla temporal en vez de romper con "Unexpected token".
+ */
+async function fetchJsonConReintentos(
+  url: string,
+  intentos = 3
+): Promise<any> {
+  let ultimoError = "";
+  for (let i = 0; i < intentos; i++) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      const texto = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(texto);
+      } catch {
+        throw new Error(
+          "Fracttal tardó demasiado en responder (falla temporal)"
+        );
+      }
+      if (!res.ok || json.success === false) {
+        throw new Error(json.message ?? `Error ${res.status}`);
+      }
+      return json;
+    } catch (err) {
+      ultimoError = err instanceof Error ? err.message : "Error desconocido";
+      if (i < intentos - 1) await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw new Error(
+    `${ultimoError}. Se intentó ${intentos} veces — pulsa Reintentar.`
+  );
+}
 
 const NIVELES = ["NORMAL", "ALERTA", "CRÍTICO"] as const;
 type Nivel = (typeof NIVELES)[number];
@@ -112,24 +149,25 @@ export default function NuevoInforme() {
     { fotos: [], comentario: "" },
   ]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/fracttal/assets");
-        const json = await res.json();
-        if (!res.ok || !json.success)
-          throw new Error(json.message ?? `Error ${res.status}`);
-        setActivos(json.data);
-        setUbicacion(json.location);
-        setEstadoActivos("ok");
-      } catch (err) {
-        setErrorActivos(
-          err instanceof Error ? err.message : "Error desconocido"
-        );
-        setEstadoActivos("error");
-      }
-    })();
+  const cargarActivos = useCallback(async () => {
+    setEstadoActivos("cargando");
+    setErrorActivos("");
+    try {
+      const json = await fetchJsonConReintentos("/api/fracttal/assets");
+      setActivos(json.data);
+      setUbicacion(json.location);
+      setEstadoActivos("ok");
+    } catch (err) {
+      setErrorActivos(
+        err instanceof Error ? err.message : "Error desconocido"
+      );
+      setEstadoActivos("error");
+    }
   }, []);
+
+  useEffect(() => {
+    cargarActivos();
+  }, [cargarActivos]);
 
   const activosFiltrados = useMemo(() => {
     const q = filtro.trim().toLowerCase();
@@ -154,12 +192,9 @@ export default function NuevoInforme() {
     setSeleccion(new Set());
     setExcluidos(new Set());
     try {
-      const res = await fetch(
+      const json = await fetchJsonConReintentos(
         `/api/fracttal/sensors?code=${encodeURIComponent(a.code)}`
       );
-      const json = await res.json();
-      if (!res.ok || !json.success)
-        throw new Error(json.message ?? `Error ${res.status}`);
       setGrupos(json.data);
       setSeleccion(new Set(json.data.map((g: SensorGroup) => g.code)));
       setEstadoSensores("ok");
@@ -244,11 +279,14 @@ export default function NuevoInforme() {
     try {
       await Promise.all(
         gruposSeleccionados.map(async (g) => {
-          const res = await fetch(
-            `/api/fracttal/averages?code=${encodeURIComponent(g.code)}&n=10`
-          );
-          const json = await res.json();
-          if (res.ok && json.success) Object.assign(prom, json.data);
+          try {
+            const json = await fetchJsonConReintentos(
+              `/api/fracttal/averages?code=${encodeURIComponent(g.code)}&n=10`
+            );
+            Object.assign(prom, json.data);
+          } catch {
+            // este sensor queda con la última lectura como respaldo
+          }
         })
       );
     } catch {
@@ -452,12 +490,19 @@ export default function NuevoInforme() {
 
           {estadoActivos === "cargando" && (
             <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
-              Cargando activos de Fracttal…
+              Cargando activos de Fracttal… (si tarda, reintenta solo hasta 3
+              veces)
             </div>
           )}
           {estadoActivos === "error" && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {errorActivos}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <span>{errorActivos}</span>
+              <button
+                onClick={cargarActivos}
+                className="shrink-0 rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+              >
+                Reintentar
+              </button>
             </div>
           )}
           {estadoActivos === "ok" && (
@@ -515,8 +560,14 @@ export default function NuevoInforme() {
             </div>
           )}
           {estadoSensores === "error" && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {errorSensores}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <span>{errorSensores}</span>
+              <button
+                onClick={() => activoSel && elegirActivo(activoSel)}
+                className="shrink-0 rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+              >
+                Reintentar
+              </button>
             </div>
           )}
           {estadoSensores === "ok" && grupos.length === 0 && (

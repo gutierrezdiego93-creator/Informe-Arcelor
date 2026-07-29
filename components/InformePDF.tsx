@@ -35,6 +35,31 @@ export interface EvidenciaPDF {
   comentario: string; // HTML (texto enriquecido) — diagnóstico de este espectro
 }
 
+/** Un valor (H/V/A de velocidad, o T de temperatura) mostrado junto al punto
+ *  del sensor en el diagrama. Viene de los MISMOS datos ya calculados para
+ *  filasVelocidad/otrosValores — nunca de una consulta aparte. */
+export interface DiagramaValor {
+  etiqueta: string; // "H", "V", "A" o "T"
+  texto: string; // valor ya formateado, listo para mostrar
+  nivel: "NORMAL" | "ALERTA" | "CRÍTICO" | null;
+}
+
+export interface DiagramaSensor {
+  sensorCode: string;
+  sensorLabel: string;
+  /** posición del punto sobre la imagen, en % (0-100) */
+  posX: number;
+  posY: number;
+  valores: DiagramaValor[];
+}
+
+/** Diagrama del "Activo monitoreado" para este equipo: solo se arma si el
+ *  activo del informe tiene imagen y sensores posicionados configurados. */
+export interface DiagramaActivo {
+  imagenUrl: string;
+  sensores: DiagramaSensor[];
+}
+
 export interface InformeData {
   activo: {
     nombre: string;
@@ -53,6 +78,8 @@ export interface InformeData {
   otrosValores: OtroValor[];
   recomendaciones: string; // HTML (texto enriquecido) — cierre del informe
   evidencias: EvidenciaPDF[];
+  /** Presente solo si el activo tiene configurado un "Activo monitoreado" */
+  diagrama?: DiagramaActivo | null;
 }
 
 // ---------- Colores del semáforo ----------
@@ -64,6 +91,11 @@ const COLOR_NIVEL: Record<string, { bg: string; fg: string }> = {
 };
 
 const BRAND = "#2929ff";
+
+// Tamaño fijo (en pt) del recuadro del diagrama, para calcular la posición
+// en píxeles de cada punto a partir de su % guardado en la base de datos.
+const DIAGRAMA_ANCHO = 460;
+const DIAGRAMA_ALTO = 200;
 
 // ---------- HTML (texto enriquecido) → elementos del PDF ----------
 
@@ -313,6 +345,52 @@ const s = StyleSheet.create({
     marginBottom: 10,
     textAlign: "center",
   },
+  // Diagrama del activo (imagen + puntos de sensores)
+  diagramaWrap: {
+    width: DIAGRAMA_ANCHO,
+    alignSelf: "center",
+    marginBottom: 6,
+  },
+  diagramaCaja: {
+    position: "relative",
+    width: DIAGRAMA_ANCHO,
+    height: DIAGRAMA_ALTO,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    backgroundColor: "#f8fafc",
+    overflow: "hidden",
+  },
+  diagramaImagen: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+  },
+  puntoDot: {
+    position: "absolute",
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: BRAND,
+    borderWidth: 1,
+    borderColor: "#ffffff",
+  },
+  puntoValores: {
+    position: "absolute",
+    width: 90,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  pastillaDiagrama: {
+    borderRadius: 3,
+    paddingVertical: 1,
+    paddingHorizontal: 3,
+    marginRight: 2,
+    marginBottom: 2,
+    fontSize: 6,
+    fontFamily: "Helvetica-Bold",
+  },
   // Tabla secundaria (aceleraciones / temperaturas) — también angosta
   tablaSecWrap: {
     width: "88%",
@@ -439,6 +517,57 @@ export function InformePDF({ data }: { data: InformeData }) {
             </View>
           </View>
         </View>
+
+        {/* Diagrama del activo (solo si el equipo tiene "Activo monitoreado"
+            configurado). Los valores junto a cada punto son los MISMOS que
+            se muestran abajo en el cuadro de velocidades / otros valores. */}
+        {data.diagrama && data.diagrama.sensores.length > 0 && (
+          <>
+            <Text style={s.seccionCentrada}>Diagrama del activo</Text>
+            <View style={s.diagramaWrap}>
+              <View style={s.diagramaCaja}>
+                {data.diagrama.imagenUrl && (
+                  // eslint-disable-next-line jsx-a11y/alt-text
+                  <Image src={data.diagrama.imagenUrl} style={s.diagramaImagen} />
+                )}
+                {data.diagrama.sensores.map((sensor, i) => {
+                  const cx = (sensor.posX / 100) * DIAGRAMA_ANCHO;
+                  const cy = (sensor.posY / 100) * DIAGRAMA_ALTO;
+                  return (
+                    <View key={i}>
+                      <View style={[s.puntoDot, { left: cx - 3, top: cy - 3 }]} />
+                      {sensor.valores.length > 0 && (
+                        <View
+                          style={[s.puntoValores, { left: cx - 45, top: cy + 5 }]}
+                        >
+                          {sensor.valores.map((v, j) => (
+                            <Text
+                              key={j}
+                              style={[
+                                s.pastillaDiagrama,
+                                v.nivel
+                                  ? {
+                                      backgroundColor: COLOR_NIVEL[v.nivel].bg,
+                                      color: COLOR_NIVEL[v.nivel].fg,
+                                    }
+                                  : { backgroundColor: "#e2e8f0", color: "#475569" },
+                              ]}
+                            >
+                              {v.etiqueta} {v.texto}
+                            </Text>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+            <Text style={s.leyenda}>
+              Diagrama: verde = normal · amarillo = alerta · rojo = crítico
+            </Text>
+          </>
+        )}
 
         {/* Cuadro de velocidades — angosto y centrado */}
         <Text style={s.seccionCentrada}>

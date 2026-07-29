@@ -78,6 +78,41 @@ export interface Asset {
   available: boolean;
 }
 
+// ---------- Caché en memoria de listados (activos / sensores) ----------
+// Fracttal pagina de a cientos de registros y cada página es una llamada
+// HTTP en serie: listar activos o sensores puede tomar varios segundos.
+// Como el catálogo de equipos/sensores casi no cambia minuto a minuto, se
+// guarda el resultado un rato corto para que abrir el wizard varias veces
+// seguidas (o que varios ingenieros abran el mismo activo) no dispare la
+// consulta completa cada vez.
+const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos
+
+interface EntradaCache<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const cacheActivos = new Map<string, EntradaCache<Asset[]>>();
+const cacheSensores = new Map<string, EntradaCache<SensorGroup[]>>();
+
+function leerCache<T>(mapa: Map<string, EntradaCache<T>>, clave: string): T | null {
+  const entrada = mapa.get(clave);
+  if (!entrada) return null;
+  if (Date.now() > entrada.expiresAt) {
+    mapa.delete(clave);
+    return null;
+  }
+  return entrada.data;
+}
+
+function guardarCache<T>(
+  mapa: Map<string, EntradaCache<T>>,
+  clave: string,
+  data: T
+): void {
+  mapa.set(clave, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 // ---------- Token OAuth con caché en memoria ----------
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
@@ -179,8 +214,12 @@ export async function getItems(params: {
 export async function getAssetsForLocation(
   locationCode: string
 ): Promise<Asset[]> {
+  const cacheado = leerCache(cacheActivos, locationCode);
+  if (cacheado) return cacheado;
+
   const all: Asset[] = [];
-  const MAX_PAGES = 10; // tope de seguridad (1000 registros)
+  const LIMIT_PAGINA = 300; // páginas grandes = menos llamadas en serie
+  const MAX_PAGES = 10; // tope de seguridad (3000 registros)
 
   // 1) Equipos hijos directos de la ubicación (rápido)
   let start = 0;
@@ -190,11 +229,11 @@ export async function getAssetsForLocation(
       item_type: 2,
       active: true,
       start,
-      limit: 100,
+      limit: LIMIT_PAGINA,
     });
     all.push(...(page.data ?? []));
-    if (!page.data || page.data.length < 100) break;
-    start += 100;
+    if (!page.data || page.data.length < LIMIT_PAGINA) break;
+    start += LIMIT_PAGINA;
   }
 
   // 2) Si no hay hijos directos, buscar en toda la jerarquía descendiente
@@ -207,22 +246,25 @@ export async function getAssetsForLocation(
         active: true,
         is_tree: true,
         start,
-        limit: 100,
+        limit: LIMIT_PAGINA,
       });
       all.push(...(page.data ?? []));
-      if (!page.data || page.data.length < 100) break;
-      start += 100;
+      if (!page.data || page.data.length < LIMIT_PAGINA) break;
+      start += LIMIT_PAGINA;
     }
   }
 
   // Excluir sub-activos (sensores): un equipo cuyo padre (location_code)
   // es OTRO equipo del listado es un sub-activo, no un equipo principal.
   const codigosEquipos = new Set(all.map((a) => a.code));
-  return all
+  const resultado = all
     .filter((a) => !a.location_code || !codigosEquipos.has(a.location_code))
     .sort((a, b) =>
       (a.field_1 ?? a.description).localeCompare(b.field_1 ?? b.description)
     );
+
+  guardarCache(cacheActivos, locationCode, resultado);
+  return resultado;
 }
 
 // ---------- Endpoints de medidores ----------
@@ -313,23 +355,36 @@ export async function insertReading(
 export async function getSensorsForAsset(
   assetCode: string
 ): Promise<SensorGroup[]> {
+  const cacheado = leerCache(cacheSensores, assetCode);
+  if (cacheado) return cacheado;
+
+  const LIMIT_PAGINA = 300; // páginas grandes = menos llamadas en serie
   const all: Meter[] = [];
 
-  // 1) medidores de las ubicaciones hijas
-  let start = 0;
-  for (;;) {
-    const page = await getMeters({
-      location_code: assetCode,
-      start,
-      limit: 100,
-    });
-    all.push(...(page.data ?? []));
-    if (!page.data || page.data.length < 100) break;
-    start += 100;
+  // 1) medidores de las ubicaciones hijas (paginado en serie: cada página
+  //    depende de la anterior) y 2) medidores directos del activo, en
+  //    paralelo entre sí porque no dependen uno del otro.
+  async function medidoresDeHijas(): Promise<Meter[]> {
+    const acumulado: Meter[] = [];
+    let start = 0;
+    for (;;) {
+      const page = await getMeters({
+        location_code: assetCode,
+        start,
+        limit: LIMIT_PAGINA,
+      });
+      acumulado.push(...(page.data ?? []));
+      if (!page.data || page.data.length < LIMIT_PAGINA) break;
+      start += LIMIT_PAGINA;
+    }
+    return acumulado;
   }
 
-  // 2) medidores directos del activo (por si también tiene propios)
-  const direct = await getMeters({ code: assetCode, limit: 100 });
+  const [hijas, direct] = await Promise.all([
+    medidoresDeHijas(),
+    getMeters({ code: assetCode, limit: LIMIT_PAGINA }),
+  ]);
+  all.push(...hijas);
   for (const m of direct.data ?? []) {
     if (!all.some((x) => x.id === m.id)) all.push(m);
   }
@@ -350,7 +405,11 @@ export async function getSensorsForAsset(
     groups.get(code)!.meters.push(m);
   }
 
-  return [...groups.values()].sort((a, b) => a.code.localeCompare(b.code));
+  const resultado = [...groups.values()].sort((a, b) =>
+    a.code.localeCompare(b.code)
+  );
+  guardarCache(cacheSensores, assetCode, resultado);
+  return resultado;
 }
 
 // ---------- Clasificación y orden de medidores ----------

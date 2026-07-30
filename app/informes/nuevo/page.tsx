@@ -15,7 +15,6 @@ import {
 } from "@/lib/fracttal";
 import type {
   DiagramaActivo,
-  DiagramaValor,
   FilaVelocidad,
   InformeData,
   OtroValor,
@@ -103,29 +102,11 @@ function nivelPorVelocidad(v: number): Nivel {
   return "CRÍTICO";
 }
 
-/** Límites de severidad para TEMPERATURA (°C): mismo criterio que la vista
- *  en vivo de "Activos monitoreados" (rojo desde 70°C, definido por Diego). */
-function nivelPorTemperatura(t: number): Nivel {
-  if (t < 55) return "NORMAL";
-  if (t < 70) return "ALERTA";
-  return "CRÍTICO";
-}
-
 /** Clases de color de celda según nivel (verde / amarillo / rojo) */
 function claseNivel(n: Nivel): string {
   if (n === "NORMAL") return "bg-green-500 text-white";
   if (n === "ALERTA") return "bg-yellow-300 text-slate-900";
   return "bg-red-600 text-white";
-}
-
-/** Abrevia la posición de un medidor para las etiquetas del diagrama
- *  (Horizontal → H, Vertical → V, Axial → A; si ya es corta, se conserva). */
-function abreviarPosicion(pos: string): string {
-  const p = pos.trim();
-  if (/^h/i.test(p)) return "H";
-  if (/^v/i.test(p)) return "V";
-  if (/^a/i.test(p)) return "A";
-  return p.length <= 2 ? p.toUpperCase() : p.slice(0, 1).toUpperCase();
 }
 
 /** Bloque de evidencia (paso 5): hasta 3 fotos de espectro + diagnóstico */
@@ -389,49 +370,23 @@ export default function NuevoInforme() {
 
   /** Arma el diagrama del activo para el PDF, SI el activo tiene un
    *  "Activo monitoreado" configurado (imagen + sensores posicionados).
-   *  Los valores de cada punto salen de `valores`/`excluidos` — los MISMOS
-   *  datos que ya arman filasVelocidad/otrosValores — nunca de un fetch
-   *  aparte, para garantizar que coincidan con el cuadro del informe. */
+   *  Solo incluye los sensores que están seleccionados en este informe
+   *  (presentes en gruposSeleccionados); muestra únicamente su ubicación
+   *  y código, sin valores (los valores están en el cuadro de abajo). */
   function construirDiagrama(
     configActivo: ActivoMonitoreadoDetalle | null
   ): DiagramaActivo | null {
     if (!configActivo) return null;
-    const sensores = configActivo.sensores.map((sp) => {
-      const g = gruposSeleccionados.find((gr) => gr.code === sp.sensor_code);
-      const valoresPunto: DiagramaValor[] = [];
-      if (g) {
-        const velocidades = ordenarPorPosicion(
-          g.meters.filter((m) => esVelocidad(m) && !excluidos.has(m.serial))
-        );
-        for (const m of velocidades) {
-          const v = parseFloat(valores[m.serial] ?? "");
-          if (isNaN(v)) continue;
-          valoresPunto.push({
-            etiqueta: abreviarPosicion(posicionDeMedidor(m)),
-            texto: v.toFixed(4),
-            nivel: nivelPorVelocidad(v),
-          });
-        }
-        for (const m of g.meters) {
-          if (esVelocidad(m) || excluidos.has(m.serial)) continue;
-          if (categoriaDeMedidor(m) !== "temp") continue;
-          const t = parseFloat(valores[m.serial] ?? "");
-          if (isNaN(t)) continue;
-          valoresPunto.push({
-            etiqueta: "T",
-            texto: `${t.toFixed(1)}°C`,
-            nivel: nivelPorTemperatura(t),
-          });
-        }
-      }
-      return {
+    const sensores = configActivo.sensores
+      .filter((sp) =>
+        gruposSeleccionados.some((gr) => gr.code === sp.sensor_code)
+      )
+      .map((sp) => ({
         sensorCode: sp.sensor_code,
         sensorLabel: sp.sensor_label ?? sp.sensor_code,
         posX: sp.pos_x,
         posY: sp.pos_y,
-        valores: valoresPunto,
-      };
-    });
+      }));
     return { imagenUrl: configActivo.imagen_url ?? "", sensores };
   }
 

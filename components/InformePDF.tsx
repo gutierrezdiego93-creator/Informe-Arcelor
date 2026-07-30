@@ -35,26 +35,19 @@ export interface EvidenciaPDF {
   comentario: string; // HTML (texto enriquecido) — diagnóstico de este espectro
 }
 
-/** Un valor (H/V/A de velocidad, o T de temperatura) mostrado junto al punto
- *  del sensor en el diagrama. Viene de los MISMOS datos ya calculados para
- *  filasVelocidad/otrosValores — nunca de una consulta aparte. */
-export interface DiagramaValor {
-  etiqueta: string; // "H", "V", "A" o "T"
-  texto: string; // valor ya formateado, listo para mostrar
-  nivel: "NORMAL" | "ALERTA" | "CRÍTICO" | null;
-}
-
+/** Un punto de sensor en el diagrama: solo su ubicación y código, sin
+ *  valores (los valores ya están en el cuadro de abajo). */
 export interface DiagramaSensor {
   sensorCode: string;
   sensorLabel: string;
   /** posición del punto sobre la imagen, en % (0-100) */
   posX: number;
   posY: number;
-  valores: DiagramaValor[];
 }
 
 /** Diagrama del "Activo monitoreado" para este equipo: solo se arma si el
- *  activo del informe tiene imagen y sensores posicionados configurados. */
+ *  activo del informe tiene imagen y sensores posicionados configurados,
+ *  y solo incluye los sensores que están seleccionados en este informe. */
 export interface DiagramaActivo {
   imagenUrl: string;
   sensores: DiagramaSensor[];
@@ -375,21 +368,19 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ffffff",
   },
-  puntoValores: {
+  etiquetaSensor: {
     position: "absolute",
-    width: 90,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-  },
-  pastillaDiagrama: {
-    borderRadius: 3,
-    paddingVertical: 1,
-    paddingHorizontal: 3,
-    marginRight: 2,
-    marginBottom: 2,
-    fontSize: 6,
+    width: 50,
+    textAlign: "center",
+    backgroundColor: "#eef1ff",
+    color: "#1b1b8f",
+    fontSize: 7,
     fontFamily: "Helvetica-Bold",
+    paddingVertical: 1,
+    paddingHorizontal: 2,
+    borderRadius: 3,
+    borderWidth: 0.5,
+    borderColor: BRAND,
   },
   // Tabla secundaria (aceleraciones / temperaturas) — también angosta
   tablaSecWrap: {
@@ -519,8 +510,9 @@ export function InformePDF({ data }: { data: InformeData }) {
         </View>
 
         {/* Diagrama del activo (solo si el equipo tiene "Activo monitoreado"
-            configurado). Los valores junto a cada punto son los MISMOS que
-            se muestran abajo en el cuadro de velocidades / otros valores. */}
+            configurado). Muestra solo la ubicación y el código de cada sensor
+            seleccionado en este informe; los valores se muestran en el
+            cuadro de abajo. */}
         {data.diagrama && data.diagrama.sensores.length > 0 && (
           <>
             <Text style={s.seccionCentrada}>Diagrama del activo</Text>
@@ -536,36 +528,16 @@ export function InformePDF({ data }: { data: InformeData }) {
                   return (
                     <View key={i}>
                       <View style={[s.puntoDot, { left: cx - 3, top: cy - 3 }]} />
-                      {sensor.valores.length > 0 && (
-                        <View
-                          style={[s.puntoValores, { left: cx - 45, top: cy + 5 }]}
-                        >
-                          {sensor.valores.map((v, j) => (
-                            <Text
-                              key={j}
-                              style={[
-                                s.pastillaDiagrama,
-                                v.nivel
-                                  ? {
-                                      backgroundColor: COLOR_NIVEL[v.nivel].bg,
-                                      color: COLOR_NIVEL[v.nivel].fg,
-                                    }
-                                  : { backgroundColor: "#e2e8f0", color: "#475569" },
-                              ]}
-                            >
-                              {v.etiqueta} {v.texto}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
+                      <Text
+                        style={[s.etiquetaSensor, { left: cx - 25, top: cy + 5 }]}
+                      >
+                        {sensor.sensorCode}
+                      </Text>
                     </View>
                   );
                 })}
               </View>
             </View>
-            <Text style={s.leyenda}>
-              Diagrama: verde = normal · amarillo = alerta · rojo = crítico
-            </Text>
           </>
         )}
 

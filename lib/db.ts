@@ -61,9 +61,53 @@ export function asegurarEsquema(): Promise<void> {
         ALTER TABLE sensores_posicionados
         ADD COLUMN IF NOT EXISTS etiqueta_pos_y REAL
       `;
+      // Caché persistente (sobrevive cold starts, a diferencia del Map en
+      // memoria de lib/fracttal.ts) para listados lentos de Fracttal, como
+      // el catálogo de activos de una ubicación. Genérica por "clave" para
+      // poder reusarla con otros listados a futuro.
+      await sql`
+        CREATE TABLE IF NOT EXISTS cache_fracttal (
+          clave TEXT PRIMARY KEY,
+          datos JSONB NOT NULL,
+          actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
     })();
   }
   return esquemaListo;
+}
+
+// ---------- Caché persistente genérica (Postgres) ----------
+
+export interface EntradaCacheDB<T> {
+  datos: T;
+  actualizadoEn: string;
+}
+
+/** Lee una entrada de la caché persistente, o null si nunca se guardó. */
+export async function leerCacheDB<T>(
+  clave: string
+): Promise<EntradaCacheDB<T> | null> {
+  await asegurarEsquema();
+  const { rows } = await sql<{ datos: T; actualizado_en: string }>`
+    SELECT datos, actualizado_en FROM cache_fracttal WHERE clave = ${clave}
+  `;
+  if (rows.length === 0) return null;
+  return { datos: rows[0].datos, actualizadoEn: rows[0].actualizado_en };
+}
+
+/** Guarda (o reemplaza) una entrada de la caché persistente. */
+export async function guardarCacheDB<T>(
+  clave: string,
+  datos: T
+): Promise<void> {
+  await asegurarEsquema();
+  await sql`
+    INSERT INTO cache_fracttal (clave, datos, actualizado_en)
+    VALUES (${clave}, ${JSON.stringify(datos)}::jsonb, now())
+    ON CONFLICT (clave) DO UPDATE
+    SET datos = EXCLUDED.datos, actualizado_en = now()
+  `;
 }
 
 export interface InformeResumen {

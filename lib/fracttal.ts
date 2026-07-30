@@ -273,10 +273,13 @@ async function paginarActivos(
  * la jerarquía descendiente (is_tree=true) si hace falta.
  */
 export async function getAssetsForLocation(
-  locationCode: string
+  locationCode: string,
+  opciones: { forzar?: boolean } = {}
 ): Promise<Asset[]> {
-  const cacheado = leerCache(cacheActivos, locationCode);
-  if (cacheado) return cacheado;
+  if (!opciones.forzar) {
+    const cacheado = leerCache(cacheActivos, locationCode);
+    if (cacheado) return cacheado;
+  }
 
   const LIMIT_PAGINA = 300; // páginas grandes = menos llamadas en total
   const MAX_PAGES = 10; // tope de seguridad (3000 registros)

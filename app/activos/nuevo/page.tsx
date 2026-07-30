@@ -47,6 +47,18 @@ interface Posicion {
   y: number;
 }
 
+/** "hace 2 min", "hace 1 h", etc. a partir de un ISO timestamp. */
+function haceTiempo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "hace instantes";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  return `hace ${d} d`;
+}
+
 export default function NuevoActivoMonitoreado() {
   const router = useRouter();
   const [paso, setPaso] = useState<1 | 2 | 3>(1);
@@ -56,6 +68,8 @@ export default function NuevoActivoMonitoreado() {
   const [ubicacion, setUbicacion] = useState("");
   const [estadoActivos, setEstadoActivos] = useState<Estado>("cargando");
   const [errorActivos, setErrorActivos] = useState("");
+  const [actualizadoEn, setActualizadoEn] = useState<string | null>(null);
+  const [refrescando, setRefrescando] = useState(false);
   const [filtro, setFiltro] = useState("");
   const [activoSel, setActivoSel] = useState<Asset | null>(null);
 
@@ -70,19 +84,28 @@ export default function NuevoActivoMonitoreado() {
   const [sensorArmado, setSensorArmado] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const cargarActivos = useCallback(async () => {
-    setEstadoActivos("cargando");
+  const cargarActivos = useCallback(async (forzar = false) => {
+    if (forzar) {
+      setRefrescando(true);
+    } else {
+      setEstadoActivos("cargando");
+    }
     setErrorActivos("");
     try {
-      const json = await fetchJsonConReintentos("/api/fracttal/assets");
+      const json = await fetchJsonConReintentos(
+        forzar ? "/api/fracttal/assets?refrescar=1" : "/api/fracttal/assets"
+      );
       setActivos(json.data);
       setUbicacion(json.location);
+      setActualizadoEn(json.actualizadoEn ?? null);
       setEstadoActivos("ok");
     } catch (err) {
       setErrorActivos(
         err instanceof Error ? err.message : "Error desconocido"
       );
-      setEstadoActivos("error");
+      if (!forzar) setEstadoActivos("error");
+    } finally {
+      if (forzar) setRefrescando(false);
     }
   }, []);
 
@@ -236,7 +259,7 @@ export default function NuevoActivoMonitoreado() {
             <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <span>{errorActivos}</span>
               <button
-                onClick={cargarActivos}
+                onClick={() => cargarActivos()}
                 className="shrink-0 rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
               >
                 Reintentar
@@ -245,14 +268,27 @@ export default function NuevoActivoMonitoreado() {
           )}
           {estadoActivos === "ok" && (
             <div className="rounded-xl border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 p-3">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-3">
                 <input
                   value={filtro}
                   onChange={(e) => setFiltro(e.target.value)}
                   placeholder={`Filtrar entre ${activos.length} activo(s)…`}
                   className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm focus:border-brand focus:outline-none"
                 />
+                <button
+                  onClick={() => cargarActivos(true)}
+                  disabled={refrescando}
+                  title="Vuelve a consultar Fracttal en vivo y actualiza el catálogo guardado"
+                  className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {refrescando ? "Actualizando…" : "Actualizar catálogo"}
+                </button>
               </div>
+              {actualizadoEn && (
+                <div className="border-b border-slate-100 px-3 py-1.5 text-xs text-slate-400">
+                  Catálogo actualizado {haceTiempo(actualizadoEn)}
+                </div>
+              )}
               <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
                 {activosFiltrados.length === 0 && (
                   <li className="p-4 text-sm text-slate-500">

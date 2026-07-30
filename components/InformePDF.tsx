@@ -51,6 +51,12 @@ export interface DiagramaSensor {
 export interface DiagramaActivo {
   imagenUrl: string;
   sensores: DiagramaSensor[];
+  /** Tamaño natural (px) de la imagen, para dibujar el recuadro con la MISMA
+   *  proporción y que los puntos (guardados como % de la imagen) queden
+   *  exactamente donde corresponde. Si no se pudo obtener, se usa una
+   *  proporción por defecto. */
+  imgAncho?: number;
+  imgAlto?: number;
 }
 
 export interface InformeData {
@@ -85,10 +91,28 @@ const COLOR_NIVEL: Record<string, { bg: string; fg: string }> = {
 
 const BRAND = "#2929ff";
 
-// Tamaño fijo (en pt) del recuadro del diagrama, para calcular la posición
-// en píxeles de cada punto a partir de su % guardado en la base de datos.
+// Tamaño MÁXIMO (en pt) del recuadro del diagrama. El tamaño real se
+// calcula por informe según la proporción real de la imagen (ver
+// calcularCajaDiagrama), para que los puntos guardados como % de la
+// imagen caigan exactamente donde corresponde (sin franjas de "contain").
 const DIAGRAMA_ANCHO = 460;
-const DIAGRAMA_ALTO = 200;
+const DIAGRAMA_ALTO = 260;
+
+/** Calcula el tamaño (ancho/alto, en pt) del recuadro del diagrama que
+ *  respeta la proporción real de la imagen dentro del máximo disponible. */
+function calcularCajaDiagrama(
+  imgAncho?: number,
+  imgAlto?: number
+): { w: number; h: number } {
+  const relacion = imgAncho && imgAlto ? imgAncho / imgAlto : DIAGRAMA_ANCHO / 200;
+  let w = DIAGRAMA_ANCHO;
+  let h = w / relacion;
+  if (h > DIAGRAMA_ALTO) {
+    h = DIAGRAMA_ALTO;
+    w = h * relacion;
+  }
+  return { w, h };
+}
 
 // ---------- HTML (texto enriquecido) → elementos del PDF ----------
 
@@ -338,16 +362,15 @@ const s = StyleSheet.create({
     marginBottom: 10,
     textAlign: "center",
   },
-  // Diagrama del activo (imagen + puntos de sensores)
+  // Diagrama del activo (imagen + puntos de sensores). El ancho/alto real
+  // se calcula por informe (calcularCajaDiagrama) según la proporción de
+  // la imagen y se aplica inline sobre estos estilos base.
   diagramaWrap: {
-    width: DIAGRAMA_ANCHO,
     alignSelf: "center",
     marginBottom: 6,
   },
   diagramaCaja: {
     position: "relative",
-    width: DIAGRAMA_ANCHO,
-    height: DIAGRAMA_ALTO,
     borderWidth: 1,
     borderColor: "#cbd5e1",
     borderRadius: 6,
@@ -513,33 +536,47 @@ export function InformePDF({ data }: { data: InformeData }) {
             configurado). Muestra solo la ubicación y el código de cada sensor
             seleccionado en este informe; los valores se muestran en el
             cuadro de abajo. */}
-        {data.diagrama && data.diagrama.sensores.length > 0 && (
-          <>
-            <Text style={s.seccionCentrada}>Diagrama del activo</Text>
-            <View style={s.diagramaWrap}>
-              <View style={s.diagramaCaja}>
-                {data.diagrama.imagenUrl && (
-                  // eslint-disable-next-line jsx-a11y/alt-text
-                  <Image src={data.diagrama.imagenUrl} style={s.diagramaImagen} />
-                )}
-                {data.diagrama.sensores.map((sensor, i) => {
-                  const cx = (sensor.posX / 100) * DIAGRAMA_ANCHO;
-                  const cy = (sensor.posY / 100) * DIAGRAMA_ALTO;
-                  return (
-                    <View key={i}>
-                      <View style={[s.puntoDot, { left: cx - 3, top: cy - 3 }]} />
-                      <Text
-                        style={[s.etiquetaSensor, { left: cx - 25, top: cy + 5 }]}
-                      >
-                        {sensor.sensorCode}
-                      </Text>
-                    </View>
-                  );
-                })}
+        {data.diagrama && data.diagrama.sensores.length > 0 && (() => {
+          const caja = calcularCajaDiagrama(
+            data.diagrama.imgAncho,
+            data.diagrama.imgAlto
+          );
+          return (
+            <>
+              <Text style={s.seccionCentrada}>Diagrama del activo</Text>
+              <View style={[s.diagramaWrap, { width: caja.w }]}>
+                <View style={[s.diagramaCaja, { width: caja.w, height: caja.h }]}>
+                  {data.diagrama.imagenUrl && (
+                    // eslint-disable-next-line jsx-a11y/alt-text
+                    <Image
+                      src={data.diagrama.imagenUrl}
+                      style={s.diagramaImagen}
+                    />
+                  )}
+                  {data.diagrama.sensores.map((sensor, i) => {
+                    const cx = (sensor.posX / 100) * caja.w;
+                    const cy = (sensor.posY / 100) * caja.h;
+                    return (
+                      <View key={i}>
+                        <View
+                          style={[s.puntoDot, { left: cx - 3, top: cy - 3 }]}
+                        />
+                        <Text
+                          style={[
+                            s.etiquetaSensor,
+                            { left: cx - 25, top: cy + 5 },
+                          ]}
+                        >
+                          {sensor.sensorCode}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
               </View>
-            </View>
-          </>
-        )}
+            </>
+          );
+        })()}
 
         {/* Cuadro de velocidades — angosto y centrado */}
         <Text style={s.seccionCentrada}>

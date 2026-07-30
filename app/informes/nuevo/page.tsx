@@ -372,9 +372,13 @@ export default function NuevoInforme() {
    *  "Activo monitoreado" configurado (imagen + sensores posicionados).
    *  Solo incluye los sensores que están seleccionados en este informe
    *  (presentes en gruposSeleccionados); muestra únicamente su ubicación
-   *  y código, sin valores (los valores están en el cuadro de abajo). */
+   *  y código, sin valores (los valores están en el cuadro de abajo).
+   *  `dimImagen` es el tamaño natural (px) de la imagen, para que el PDF
+   *  dibuje el recuadro con la misma proporción y los puntos (% guardado)
+   *  caigan exactamente donde corresponde. */
   function construirDiagrama(
-    configActivo: ActivoMonitoreadoDetalle | null
+    configActivo: ActivoMonitoreadoDetalle | null,
+    dimImagen: { w: number; h: number } | null
   ): DiagramaActivo | null {
     if (!configActivo) return null;
     const sensores = configActivo.sensores
@@ -387,12 +391,18 @@ export default function NuevoInforme() {
         posX: sp.pos_x,
         posY: sp.pos_y,
       }));
-    return { imagenUrl: configActivo.imagen_url ?? "", sensores };
+    return {
+      imagenUrl: configActivo.imagen_url ?? "",
+      sensores,
+      imgAncho: dimImagen?.w,
+      imgAlto: dimImagen?.h,
+    };
   }
 
   /** Reúne todo lo capturado en la estructura que consume el PDF */
   function construirDatosInforme(
-    configActivo: ActivoMonitoreadoDetalle | null
+    configActivo: ActivoMonitoreadoDetalle | null,
+    dimImagen: { w: number; h: number } | null
   ): InformeData {
     const filasVelocidad: FilaVelocidad[] = [];
     const otrosValores: OtroValor[] = [];
@@ -446,11 +456,27 @@ export default function NuevoInforme() {
       otrosValores,
       recomendaciones: recomendacionesGeneral,
       evidencias,
-      diagrama: construirDiagrama(configActivo),
+      diagrama: construirDiagrama(configActivo, dimImagen),
     };
   }
 
   const [generandoPDF, setGenerandoPDF] = useState(false);
+
+  /** Carga una imagen en el navegador solo para leer su tamaño natural
+   *  (ancho/alto en px). Se usa para que el recuadro del diagrama en el
+   *  PDF respete la MISMA proporción que la imagen real, y así los puntos
+   *  guardados como % caigan en el lugar correcto. */
+  function cargarDimensionesImagen(
+    url: string
+  ): Promise<{ w: number; h: number } | null> {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      img.onload = () =>
+        resolve({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
 
   async function generarPDF() {
     setGenerandoPDF(true);
@@ -466,6 +492,7 @@ export default function NuevoInforme() {
       // configurado o falla la consulta, el informe se genera igual, sin
       // esa sección — no interrumpe la descarga.
       let configActivo: ActivoMonitoreadoDetalle | null = null;
+      let dimImagen: { w: number; h: number } | null = null;
       if (activoSel) {
         try {
           const res = await fetch(
@@ -479,9 +506,12 @@ export default function NuevoInforme() {
         } catch {
           // sin diagrama si falla la consulta
         }
+        if (configActivo?.imagen_url) {
+          dimImagen = await cargarDimensionesImagen(configActivo.imagen_url);
+        }
       }
 
-      const data = construirDatosInforme(configActivo);
+      const data = construirDatosInforme(configActivo, dimImagen);
       const blob = await pdf(<InformePDF data={data} />).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

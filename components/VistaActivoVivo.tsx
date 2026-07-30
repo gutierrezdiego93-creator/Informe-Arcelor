@@ -15,7 +15,10 @@ import {
   mmsAInsNumero,
   nivelVelocidad,
   nivelTemperatura,
+  nivelDesdeRango,
+  unidadDeMedidor,
   ordenarPorPosicion,
+  ordenarMedidores,
   type NivelSeveridad,
 } from "@/lib/fracttal";
 
@@ -111,11 +114,25 @@ export default function VistaActivoVivo({
 
       const entradas = await Promise.all(
         detalle.sensores.map(async (s) => {
+          // Un sensor "desarmado" (tarea #47) tiene un code sintético
+          // "ACTIVO::idMedidor" que no existe en Fracttal — hay que pedir
+          // las lecturas con el code REAL del activo dueño + el serial del
+          // medidor. Los sensores normales (agrupados) siguen usando su
+          // code real de siempre.
+          const esDesarmado = s.sensor_code.includes("::");
+          const grupo = metaPorCodigo[s.sensor_code];
+          const params = new URLSearchParams();
+          if (esDesarmado && grupo?.meters[0]) {
+            params.set("code", grupo.meters[0].code);
+            params.set("serial", grupo.meters[0].serial);
+            params.set("n", "5");
+          } else {
+            params.set("code", s.sensor_code);
+            params.set("n", "10");
+          }
           try {
             const j = await fetchJson(
-              `/api/fracttal/averages?code=${encodeURIComponent(
-                s.sensor_code
-              )}&n=10`
+              `/api/fracttal/averages?${params.toString()}`
             );
             return [s.sensor_code, j.data as PromediosPorMedidor] as const;
           } catch {
@@ -350,11 +367,17 @@ function IndicadorSensor({
   contenedorRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const meters: Meter[] = grupo?.meters ?? [];
+  // Un punto de vibración clásico (molino) trae velocidad H/V/A [+ temp].
+  // Cualquier otro grupo (voltaje, corriente, desplazamiento, etc. — típico
+  // de activos donde Fracttal no separó los medidores en sub-activos) se
+  // muestra como 1 pastilla por medidor en vez de forzar la rejilla H/V/A/T.
+  const esPuntoDeVibracion = meters.some(esVelocidad);
   const velocidades = ordenarPorPosicion(meters.filter(esVelocidad)).slice(
     0,
     3
   );
   const temperatura = meters.find((m) => categoriaDeMedidor(m) === "temp");
+  const medidoresGenericos = ordenarMedidores(meters);
 
   const arrastreRef = useRef<{
     clientX: number;
@@ -384,6 +407,27 @@ function IndicadorSensor({
     const prom = promedios[m.id];
     if (!prom) return { texto: "—", nivel: null };
     return { texto: String(prom.avg), nivel: nivelTemperatura(prom.avg) };
+  }
+
+  /**
+   * Texto (con unidad) y nivel de un medidor genérico: voltaje, corriente,
+   * potencia, desplazamiento, etc. El color sale del rango min_value/max_value
+   * que ya trae Fracttal por medidor; si Fracttal no lo tiene configurado, se
+   * muestra sin color (gris) en vez de asumir que está normal.
+   */
+  function datoGenerico(m: Meter): {
+    texto: string;
+    nivel: NivelSeveridad | null;
+  } {
+    const prom = promedios[m.id];
+    if (!prom) return { texto: "—", nivel: null };
+    const decimales = Math.abs(prom.avg) < 10 ? 2 : 1;
+    const valor = Number(prom.avg.toFixed(decimales));
+    const unidad = unidadDeMedidor(m);
+    return {
+      texto: unidad ? `${valor} ${unidad}` : String(valor),
+      nivel: nivelDesdeRango(prom.avg, m.min_value, m.max_value),
+    };
   }
 
   function manejarPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -465,7 +509,7 @@ function IndicadorSensor({
           <p className="text-slate-400">Cargando…</p>
         ) : !grupo ? (
           <p className="text-slate-400">Sin datos</p>
-        ) : (
+        ) : esPuntoDeVibracion ? (
           <div className="grid grid-cols-2 gap-1">
             <Pastilla etiqueta="H" dato={datoVelocidad(velocidades[0])} />
             <Pastilla etiqueta="V" dato={datoVelocidad(velocidades[1])} />
@@ -475,6 +519,16 @@ function IndicadorSensor({
               dato={datoTemperatura(temperatura)}
               sufijo="°"
             />
+          </div>
+        ) : (
+          <div className="min-w-[9rem] space-y-1">
+            {medidoresGenericos.map((m) => (
+              <PastillaGenerica
+                key={m.id}
+                etiqueta={m.description}
+                dato={datoGenerico(m)}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -497,5 +551,28 @@ function Pastilla({
       {etiqueta} {dato.texto}
       {dato.nivel ? sufijo : ""}
     </span>
+  );
+}
+
+/** Pastilla de un medidor genérico: etiqueta (descripción) + valor con unidad. */
+function PastillaGenerica({
+  etiqueta,
+  dato,
+}: {
+  etiqueta: string;
+  dato: { texto: string; nivel: NivelSeveridad | null };
+}) {
+  const clase = dato.nivel ? CLASE_NIVEL[dato.nivel] : CLASE_SIN_DATO;
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="truncate text-slate-300" title={etiqueta}>
+        {etiqueta}
+      </span>
+      <span
+        className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 font-medium ${clase}`}
+      >
+        {dato.texto}
+      </span>
+    </div>
   );
 }

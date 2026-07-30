@@ -496,12 +496,40 @@ export function esVelocidad(m: Meter): boolean {
   );
 }
 
-/** Categoría del medidor: velocidad, aceleración o temperatura */
-export function categoriaDeMedidor(m: Meter): "vel" | "acel" | "temp" {
+export type CategoriaMedidor = "vel" | "acel" | "temp" | "otro";
+
+/**
+ * Categoría del medidor: velocidad, aceleración, temperatura, u "otro"
+ * (voltaje, corriente, potencia, desplazamiento, etc. — cualquier variable
+ * que no sea parte de un punto de vibración clásico). Antes cualquier cosa
+ * que no fuera vel/acel caía en "temp" por defecto, lo cual clasificaba mal
+ * medidores eléctricos de activos como la bomba de lodos.
+ */
+export function categoriaDeMedidor(m: Meter): CategoriaMedidor {
   if (esVelocidad(m)) return "vel";
   if (m.units_code === "g" || m.serial.toLowerCase().includes("accel"))
     return "acel";
-  return "temp";
+  const unidad = m.units_code?.toLowerCase() ?? "";
+  const desc = m.description?.toLowerCase() ?? "";
+  if (
+    unidad === "°c" ||
+    unidad === "c" ||
+    unidad === "°f" ||
+    unidad === "f" ||
+    desc.includes("temp")
+  )
+    return "temp";
+  return "otro";
+}
+
+/**
+ * Unidad de medida lista para mostrar después del número. Se usa la que
+ * reporta la propia Fracttal (`units_description`) en vez de mapear cada
+ * `units_code` a mano, para que cualquier variable nueva (voltaje, presión,
+ * etc.) se muestre bien sin tocar código.
+ */
+export function unidadDeMedidor(m: Meter): string {
+  return (m.units_description || m.units_code || "").trim();
 }
 
 /** Convierte mm/s (dato crudo de Fracttal) a in/s. 1 in = 25.4 mm */
@@ -531,6 +559,32 @@ export function nivelVelocidad(inPorSeg: number): NivelSeveridad {
 export function nivelTemperatura(celsius: number): NivelSeveridad {
   if (celsius < 55) return "normal";
   if (celsius < 70) return "alerta";
+  return "critico";
+}
+
+/**
+ * Semáforo genérico para cualquier medidor que NO sea velocidad/temperatura
+ * (voltaje, corriente, potencia, desplazamiento, etc.), usando el rango
+ * min_value/max_value que ya trae Fracttal por medidor (se configura una
+ * vez, por medidor, directamente en Fracttal — no duplicamos límites en
+ * nuestra base de datos). Si Fracttal no tiene el rango cargado, no hay
+ * forma confiable de saber si el valor es normal o no: se devuelve null y
+ * la tarjeta se muestra sin color (gris), no como si fuera "normal".
+ *
+ * Dentro del rango = normal. Hasta un 10% fuera del rango = alerta (holgura
+ * razonable antes de considerarlo crítico). Más allá = crítico.
+ */
+export function nivelDesdeRango(
+  valor: number,
+  min: number | null | undefined,
+  max: number | null | undefined
+): NivelSeveridad | null {
+  if (min == null || max == null || !Number.isFinite(min) || !Number.isFinite(max))
+    return null;
+  if (min >= max) return null;
+  if (valor >= min && valor <= max) return "normal";
+  const margen = (max - min) * 0.1;
+  if (valor >= min - margen && valor <= max + margen) return "alerta";
   return "critico";
 }
 

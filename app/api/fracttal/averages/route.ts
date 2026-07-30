@@ -1,5 +1,8 @@
 // Promedio de las últimas N lecturas de cada medidor de un sensor
 //   /api/fracttal/averages?code=CLC&n=10
+//   /api/fracttal/averages?code=M-002&serial=M-002-VOLT-L1&n=5  (medidor
+//   individual "desarmado": code = activo real dueño del medidor, serial =
+//   identifica al medidor exacto dentro de ese activo)
 // Respuesta: { success, data: { [id_meter]: { avg, count, min, max, last } } }
 import { NextRequest, NextResponse } from "next/server";
 import { getMeterReadings, type MeterReading } from "@/lib/fracttal";
@@ -21,6 +24,7 @@ export interface PromedioMedidor {
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   const code = p.get("code")?.trim();
+  const serial = p.get("serial")?.trim() || undefined;
   const n = Math.min(Math.max(parseInt(p.get("n") ?? "10", 10) || 10, 1), 50);
   if (!code) {
     return NextResponse.json(
@@ -40,6 +44,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < MAX_PAGES; i++) {
       const page = await getMeterReadings({
         code,
+        serial,
         type_date: "date_reading",
         since,
         start,

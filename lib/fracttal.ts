@@ -448,11 +448,37 @@ export async function getSensorsForAsset(
     groups.get(code)!.meters.push(m);
   }
 
-  const resultado = [...groups.values()].sort((a, b) =>
-    a.code.localeCompare(b.code)
-  );
+  const resultado = [...groups.values()]
+    .flatMap(desarmarSiEsPlano)
+    .sort((a, b) => a.code.localeCompare(b.code));
   guardarCache(cacheSensores, assetCode, resultado);
   return resultado;
+}
+
+// Cuántas unidades distintas puede tener razonablemente UN punto físico de
+// vibración (ej. velocidad in/s + aceleración g + temperatura °C = 3). Un
+// grupo con más unidades distintas que esto ya no representa "un sensor",
+// sino un activo donde Fracttal no separó los instrumentos en sub-activos
+// (ej. una bomba con voltaje/corriente/potencia/vibración/temperatura, TODOS
+// colgando del mismo código). En ese caso no tiene sentido colapsar 12
+// medidores en 1 solo pin: se ubica cada medidor por separado.
+const MAX_UNIDADES_POR_PUNTO = 3;
+
+/**
+ * Si un grupo mezcla más tipos de unidad de los esperables para un solo
+ * punto de sensor, lo "desarma" en un grupo por medidor (cada uno ubicable
+ * por separado). Si no, lo deja igual que hoy (1 grupo = 1 pin).
+ */
+function desarmarSiEsPlano(grupo: SensorGroup): SensorGroup[] {
+  const unidades = new Set(grupo.meters.map((m) => m.units_code));
+  if (unidades.size <= MAX_UNIDADES_POR_PUNTO) return [grupo];
+
+  return grupo.meters.map((m) => ({
+    code: `${grupo.code}::${m.id}`,
+    description: m.description,
+    parentPath: grupo.parentPath,
+    meters: [m],
+  }));
 }
 
 // ---------- Clasificación y orden de medidores ----------

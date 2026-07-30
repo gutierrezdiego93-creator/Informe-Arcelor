@@ -85,7 +85,7 @@ export interface Asset {
 // guarda el resultado un rato corto para que abrir el wizard varias veces
 // seguidas (o que varios ingenieros abran el mismo activo) no dispare la
 // consulta completa cada vez.
-const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
 interface EntradaCache<T> {
   data: T;
@@ -207,9 +207,70 @@ export async function getItems(params: {
   );
 }
 
+type ParamsPaginables = {
+  code?: string;
+  location_code?: string;
+  item_type?: number;
+  active?: boolean;
+  is_tree?: boolean;
+};
+
+/**
+ * Trae TODAS las páginas de /items/ para un filtro dado.
+ *
+ * Antes se pedía página por página en serie (cada `await` esperaba a la
+ * anterior), lo que con listados grandes (activo con muchos sub-equipos o
+ * `is_tree=true` sobre una ubicación raíz) podía encadenar hasta 10 llamadas
+ * HTTP seguidas y superar el límite de 60s de la función serverless.
+ *
+ * Ahora se pide la primera página, se lee `total` de la respuesta y —si
+ * Fracttal lo informa— el resto de páginas se piden todas EN PARALELO. Si no
+ * informa `total`, se cae de vuelta al modo secuencial (más lento pero
+ * siempre correcto).
+ */
+async function paginarActivos(
+  params: ParamsPaginables,
+  limitPagina: number,
+  maxPages: number
+): Promise<Asset[]> {
+  const primera = await getItems({ ...params, start: 0, limit: limitPagina });
+  const datos = primera.data ?? [];
+  if (datos.length < limitPagina) return datos; // ya vino todo en una sola página
+
+  const totalCrudo = primera.total;
+  const total =
+    typeof totalCrudo === "string" ? parseInt(totalCrudo, 10) : totalCrudo;
+
+  if (total && Number.isFinite(total)) {
+    const totalPaginas = Math.min(Math.ceil(total / limitPagina), maxPages);
+    if (totalPaginas <= 1) return datos;
+
+    const indices = Array.from({ length: totalPaginas - 1 }, (_, i) => i + 1);
+    const resto = await Promise.all(
+      indices.map((i) =>
+        getItems({ ...params, start: i * limitPagina, limit: limitPagina })
+      )
+    );
+    const todos = [...datos];
+    for (const pagina of resto) todos.push(...(pagina.data ?? []));
+    return todos;
+  }
+
+  // Fallback: Fracttal no informó `total` -> seguimos en serie como antes.
+  const todos = [...datos];
+  let start = limitPagina;
+  for (let i = 1; i < maxPages; i++) {
+    const pagina = await getItems({ ...params, start, limit: limitPagina });
+    todos.push(...(pagina.data ?? []));
+    if (!pagina.data || pagina.data.length < limitPagina) break;
+    start += limitPagina;
+  }
+  return todos;
+}
+
 /**
  * Lista los EQUIPOS (id_type_item = 2) bajo una ubicación, incluyendo toda
- * la jerarquía descendiente (is_tree=true). Pagina de 100 en 100.
+ * la jerarquía descendiente (is_tree=true) si hace falta.
  */
 export async function getAssetsForLocation(
   locationCode: string
@@ -217,41 +278,23 @@ export async function getAssetsForLocation(
   const cacheado = leerCache(cacheActivos, locationCode);
   if (cacheado) return cacheado;
 
-  const all: Asset[] = [];
-  const LIMIT_PAGINA = 300; // páginas grandes = menos llamadas en serie
+  const LIMIT_PAGINA = 300; // páginas grandes = menos llamadas en total
   const MAX_PAGES = 10; // tope de seguridad (3000 registros)
 
   // 1) Equipos hijos directos de la ubicación (rápido)
-  let start = 0;
-  for (let i = 0; i < MAX_PAGES; i++) {
-    const page = await getItems({
-      location_code: locationCode,
-      item_type: 2,
-      active: true,
-      start,
-      limit: LIMIT_PAGINA,
-    });
-    all.push(...(page.data ?? []));
-    if (!page.data || page.data.length < LIMIT_PAGINA) break;
-    start += LIMIT_PAGINA;
-  }
+  let all = await paginarActivos(
+    { location_code: locationCode, item_type: 2, active: true },
+    LIMIT_PAGINA,
+    MAX_PAGES
+  );
 
   // 2) Si no hay hijos directos, buscar en toda la jerarquía descendiente
   if (all.length === 0) {
-    start = 0;
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const page = await getItems({
-        location_code: locationCode,
-        item_type: 2,
-        active: true,
-        is_tree: true,
-        start,
-        limit: LIMIT_PAGINA,
-      });
-      all.push(...(page.data ?? []));
-      if (!page.data || page.data.length < LIMIT_PAGINA) break;
-      start += LIMIT_PAGINA;
-    }
+    all = await paginarActivos(
+      { location_code: locationCode, item_type: 2, active: true, is_tree: true },
+      LIMIT_PAGINA,
+      MAX_PAGES
+    );
   }
 
   // Excluir sub-activos (sensores): un equipo cuyo padre (location_code)

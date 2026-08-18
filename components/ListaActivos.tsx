@@ -1,9 +1,66 @@
 "use client";
 
-// Grid de activos monitoreados (Activos > Home) con opción de eliminar.
-import { useState } from "react";
+// Grid de activos monitoreados (Activos > Home) con opción de eliminar y
+// semáforo global por activo (criterio ISO peor caso, solo vibración H/V/A).
+// El semáforo se pide a /api/activos/semaforos (una sola llamada para todas
+// las cartillas) al cargar y luego cada 60 segundos.
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { ActivoMonitoreadoResumen } from "@/lib/db";
+import type { NivelSeveridad } from "@/lib/fracttal";
+
+interface SemaforoActivo {
+  nivel: NivelSeveridad | null;
+  sensoresEvaluados: number;
+  sensoresConDato: number;
+  porNivel: Record<NivelSeveridad, number>;
+}
+
+const SEGUNDOS_AUTOREFRESH = 60;
+
+// Mismos colores de severidad que la vista en vivo.
+const PASTILLA: Record<NivelSeveridad, { clase: string; punto: string; texto: string }> = {
+  normal: { clase: "bg-[#C0DD97] text-[#173404]", punto: "#3B6D11", texto: "NORMAL" },
+  alerta: { clase: "bg-[#FAC775] text-[#412402]", punto: "#854F0B", texto: "ALERTA" },
+  critico: { clase: "bg-[#F09595] text-[#501313]", punto: "#A32D2D", texto: "CRÍTICO" },
+};
+
+function PastillaSemaforo({
+  semaforo,
+  cargando,
+}: {
+  semaforo: SemaforoActivo | undefined;
+  cargando: boolean;
+}) {
+  if (!semaforo && cargando) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-400">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
+        …
+      </span>
+    );
+  }
+  if (!semaforo || semaforo.nivel === null) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-slate-500" />
+        SIN DATOS
+      </span>
+    );
+  }
+  const p = PASTILLA[semaforo.nivel];
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${p.clase}`}
+    >
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ backgroundColor: p.punto }}
+      />
+      {p.texto}
+    </span>
+  );
+}
 
 export default function ListaActivos({
   activosIniciales,
@@ -12,6 +69,42 @@ export default function ListaActivos({
 }) {
   const [activos, setActivos] = useState(activosIniciales);
   const [eliminandoCode, setEliminandoCode] = useState<string | null>(null);
+  const [semaforos, setSemaforos] = useState<Record<string, SemaforoActivo>>(
+    {}
+  );
+  const [cargandoSemaforos, setCargandoSemaforos] = useState(true);
+  const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(
+    null
+  );
+  // Tick de 1s solo para refrescar el "hace Xs" de las leyendas.
+  const [, setTick] = useState(0);
+
+  const cargarSemaforos = useCallback(async () => {
+    setCargandoSemaforos(true);
+    try {
+      const res = await fetch("/api/activos/semaforos", { cache: "no-store" });
+      const json = await res.json();
+      if (json.success) {
+        setSemaforos(json.data as Record<string, SemaforoActivo>);
+        setUltimaActualizacion(new Date());
+      }
+    } catch {
+      // Silencioso: la cartilla mantiene el último estado conocido y el
+      // siguiente ciclo de 60s vuelve a intentar.
+    } finally {
+      setCargandoSemaforos(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarSemaforos();
+    const idRefresh = setInterval(cargarSemaforos, SEGUNDOS_AUTOREFRESH * 1000);
+    const idTick = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => {
+      clearInterval(idRefresh);
+      clearInterval(idTick);
+    };
+  }, [cargarSemaforos]);
 
   async function eliminar(code: string) {
     if (
@@ -47,52 +140,74 @@ export default function ListaActivos({
     );
   }
 
+  const haceSegundos = ultimaActualizacion
+    ? Math.max(0, Math.round((Date.now() - ultimaActualizacion.getTime()) / 1000))
+    : null;
+
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {activos.map((a) => (
-        <div
-          key={a.activo_code}
-          className="overflow-hidden rounded-xl border border-slate-200 bg-white"
-        >
-          <Link href={`/activos/${encodeURIComponent(a.activo_code)}`}>
-            {a.imagen_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={a.imagen_url}
-                alt={a.activo_nombre ?? a.activo_code}
-                className="h-40 w-full bg-slate-100 object-cover"
-              />
-            ) : (
-              <div className="flex h-40 items-center justify-center bg-slate-100 text-xs text-slate-400">
-                Sin imagen
+      {activos.map((a) => {
+        const semaforo = semaforos[a.activo_code];
+        return (
+          <div
+            key={a.activo_code}
+            className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+          >
+            <Link href={`/activos/${encodeURIComponent(a.activo_code)}`}>
+              {a.imagen_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={a.imagen_url}
+                  alt={a.activo_nombre ?? a.activo_code}
+                  className="h-40 w-full bg-slate-100 object-cover"
+                />
+              ) : (
+                <div className="flex h-40 items-center justify-center bg-slate-100 text-xs text-slate-400">
+                  Sin imagen
+                </div>
+              )}
+            </Link>
+            <div className="p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-800">
+                    {a.activo_nombre ?? a.activo_code}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {a.activo_code} · {a.num_sensores} sensor(es)
+                  </p>
+                </div>
+                <PastillaSemaforo
+                  semaforo={semaforo}
+                  cargando={cargandoSemaforos}
+                />
               </div>
-            )}
-          </Link>
-          <div className="p-4">
-            <p className="truncate text-sm font-medium text-slate-800">
-              {a.activo_nombre ?? a.activo_code}
-            </p>
-            <p className="text-xs text-slate-500">
-              {a.activo_code} · {a.num_sensores} sensor(es)
-            </p>
-            <div className="mt-3 flex items-center justify-between">
-              <Link
-                href={`/activos/${encodeURIComponent(a.activo_code)}`}
-                className="text-sm text-brand hover:underline"
-              >
-                Ver en vivo →
-              </Link>
-              <button
-                onClick={() => eliminar(a.activo_code)}
-                disabled={eliminandoCode === a.activo_code}
-                className="text-xs text-red-600 hover:underline disabled:opacity-50"
-              >
-                {eliminandoCode === a.activo_code ? "Eliminando…" : "Eliminar"}
-              </button>
+              {semaforo && semaforo.sensoresEvaluados > 0 && (
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Semáforo: {semaforo.sensoresConDato}/{semaforo.sensoresEvaluados}{" "}
+                  sensor(es) de vibración
+                  {haceSegundos !== null && <> · hace {haceSegundos} s</>}
+                </p>
+              )}
+              <div className="mt-3 flex items-center justify-between">
+                <Link
+                  href={`/activos/${encodeURIComponent(a.activo_code)}`}
+                  className="text-sm text-brand hover:underline"
+                >
+                  Ver en vivo →
+                </Link>
+                <button
+                  onClick={() => eliminar(a.activo_code)}
+                  disabled={eliminandoCode === a.activo_code}
+                  className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {eliminandoCode === a.activo_code ? "Eliminando…" : "Eliminar"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -31,9 +31,14 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// Mismos parámetros que /api/fracttal/averages (vista en vivo): promedio de
-// las últimas N lecturas dentro de una ventana de 45 días.
-const N_LECTURAS = 10;
+// Mismos parámetros que la vista en vivo (VistaActivoVivo → /api/fracttal/
+// averages): promedio de las últimas N lecturas dentro de una ventana de 45
+// días. N debe COINCIDIR con la vista en vivo para que la cartilla y el
+// detalle muestren siempre el mismo color:
+//   - sensores agrupados (molino, H/V/A en un punto)  → 10 lecturas
+//   - sensores desarmados (bomba de lodos, "::")      → 5 lecturas
+const N_LECTURAS_AGRUPADO = 10;
+const N_LECTURAS_DESARMADO = 5;
 const DIAS_VENTANA = 45;
 const MAX_PAGES = 6; // tope de seguridad (600 lecturas por sensor)
 
@@ -74,6 +79,7 @@ const PESO: Record<NivelSeveridad, number> = {
 /** Promedio de las últimas N lecturas por medidor de un sensor (sub-activo). */
 async function promediosPorMedidor(
   code: string,
+  nLecturas: number,
   serial?: string
 ): Promise<Map<number, number>> {
   const since = new Date(Date.now() - DIAS_VENTANA * 86_400_000)
@@ -111,7 +117,7 @@ async function promediosPorMedidor(
         new Date(a.date_reading ?? a.date).getTime() -
         new Date(b.date_reading ?? b.date).getTime()
     );
-    const ultimas = lecturas.slice(-N_LECTURAS);
+    const ultimas = lecturas.slice(-nLecturas);
     const suma = ultimas.reduce((acc, r) => acc + r.data.value, 0);
     promedios.set(idMeter, suma / ultimas.length);
   }
@@ -141,11 +147,16 @@ async function evaluarSensor(grupo: SensorGroup): Promise<EvaluacionSensor> {
   if (velocidades.length === 0) return { nivel: null, ejesRojos: [] };
 
   // Sensor "desarmado" (code sintético ACTIVO::idMedidor): las lecturas se
-  // piden con el code real del activo dueño + el serial del medidor.
+  // piden con el code real del activo dueño + el serial del medidor, y con
+  // el MISMO N que usa la vista en vivo (5) para que ambos coincidan.
   const esDesarmado = grupo.code.includes("::");
   const promedios = esDesarmado
-    ? await promediosPorMedidor(grupo.meters[0].code, grupo.meters[0].serial)
-    : await promediosPorMedidor(grupo.code);
+    ? await promediosPorMedidor(
+        grupo.meters[0].code,
+        N_LECTURAS_DESARMADO,
+        grupo.meters[0].serial
+      )
+    : await promediosPorMedidor(grupo.code, N_LECTURAS_AGRUPADO);
 
   let peor: NivelSeveridad | null = null;
   const ejesRojos: EjeEnRojo[] = [];

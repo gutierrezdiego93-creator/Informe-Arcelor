@@ -72,6 +72,34 @@ export function asegurarEsquema(): Promise<void> {
           actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `;
+      // ---- Pestaña Mapa ----
+      // El mapa de planta son N posiciones fijas ("slots"). Cada slot se
+      // asocia a UN activo de Fracttal; el nombre se guarda solo como copia
+      // para poder pintar la tarjeta sin volver a consultar el catálogo (la
+      // fuente de verdad sigue siendo Fracttal y se refresca al reasignar).
+      await sql`
+        CREATE TABLE IF NOT EXISTS mapa_slots (
+          slot INTEGER PRIMARY KEY,
+          activo_code TEXT,
+          activo_nombre TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+      // Posiciones de los puntos sobre el plano, en PORCENTAJES relativos a
+      // la imagen (no píxeles) para que escale sin descuadrarse. Tabla aparte
+      // de `sensores_posicionados` porque aquellas coordenadas son de la foto
+      // lateral del gemelo digital y se pisarían entre sí.
+      await sql`
+        CREATE TABLE IF NOT EXISTS mapa_sensores (
+          id SERIAL PRIMARY KEY,
+          slot INTEGER NOT NULL REFERENCES mapa_slots(slot) ON DELETE CASCADE,
+          sensor_code TEXT NOT NULL,
+          sensor_label TEXT,
+          pos_x REAL NOT NULL,
+          pos_y REAL NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
     })();
   }
   return esquemaListo;
@@ -286,4 +314,95 @@ export async function eliminarActivoMonitoreado(
 ): Promise<void> {
   await asegurarEsquema();
   await sql`DELETE FROM activos_config WHERE activo_code = ${activoCode}`;
+}
+
+// ---------- Mapa de planta (slots + puntos sobre el plano) ----------
+
+/** Posiciones del mapa. Hoy 4 (los cuatro molinos); subir este número basta
+ *  para ampliar el mapa, no hay nada más hardcodeado. */
+export const SLOTS_MAPA = 4;
+
+export interface SensorMapa {
+  id: number;
+  sensor_code: string;
+  sensor_label: string | null;
+  pos_x: number;
+  pos_y: number;
+}
+
+export interface SlotMapa {
+  slot: number;
+  /** null = posición todavía sin activo asignado. */
+  activo_code: string | null;
+  /** Nombre del activo tal como está en Fracttal (copia local). */
+  activo_nombre: string | null;
+  sensores: SensorMapa[];
+}
+
+/** Devuelve SIEMPRE los SLOTS_MAPA slots, vacíos los que aún no se configuran. */
+export async function listarMapa(): Promise<SlotMapa[]> {
+  await asegurarEsquema();
+  const { rows: slotRows } = await sql<{
+    slot: number;
+    activo_code: string | null;
+    activo_nombre: string | null;
+  }>`
+    SELECT slot, activo_code, activo_nombre FROM mapa_slots ORDER BY slot ASC
+  `;
+  const { rows: sensorRows } = await sql<SensorMapa & { slot: number }>`
+    SELECT slot, id, sensor_code, sensor_label, pos_x, pos_y
+    FROM mapa_sensores
+    ORDER BY id ASC
+  `;
+
+  const porSlot = new Map(slotRows.map((s) => [s.slot, s]));
+  return Array.from({ length: SLOTS_MAPA }, (_, i) => {
+    const n = i + 1;
+    const guardado = porSlot.get(n);
+    return {
+      slot: n,
+      activo_code: guardado?.activo_code ?? null,
+      activo_nombre: guardado?.activo_nombre ?? null,
+      sensores: sensorRows
+        .filter((s) => s.slot === n)
+        .map(({ id, sensor_code, sensor_label, pos_x, pos_y }) => ({
+          id,
+          sensor_code,
+          sensor_label,
+          pos_x,
+          pos_y,
+        })),
+    };
+  });
+}
+
+/** Asigna el activo de un slot y reemplaza por completo sus puntos. */
+export async function guardarSlotMapa(
+  slot: number,
+  activoCode: string,
+  activoNombre: string,
+  sensores: { sensorCode: string; sensorLabel: string; x: number; y: number }[]
+): Promise<void> {
+  await asegurarEsquema();
+  await sql`
+    INSERT INTO mapa_slots (slot, activo_code, activo_nombre, updated_at)
+    VALUES (${slot}, ${activoCode}, ${activoNombre}, now())
+    ON CONFLICT (slot) DO UPDATE
+    SET activo_code = EXCLUDED.activo_code,
+        activo_nombre = EXCLUDED.activo_nombre,
+        updated_at = now()
+  `;
+  await sql`DELETE FROM mapa_sensores WHERE slot = ${slot}`;
+  for (const s of sensores) {
+    await sql`
+      INSERT INTO mapa_sensores (slot, sensor_code, sensor_label, pos_x, pos_y)
+      VALUES (${slot}, ${s.sensorCode}, ${s.sensorLabel}, ${s.x}, ${s.y})
+    `;
+  }
+}
+
+/** Deja un slot vacío (quita el activo y sus puntos). */
+export async function limpiarSlotMapa(slot: number): Promise<void> {
+  await asegurarEsquema();
+  await sql`DELETE FROM mapa_slots WHERE slot = ${slot}`;
 }

@@ -487,12 +487,27 @@ function desarmarSiEsPlano(grupo: SensorGroup): SensorGroup[] {
 // ---------- Clasificación y orden de medidores ----------
 // (compartido por el wizard de informes y la vista de Activos monitoreados)
 
-/** ¿El medidor es de velocidad? (por unidad o por serial tipo CLC_velX) */
+/**
+ * Nomenclatura temporal (bomba de lodos y similares): medidores de vibración
+ * cargados en Fracttal como "Eje x" / "Eje y" / "Eje z", sin unidad mm/s ni
+ * serial con "vel". Sus lecturas SÍ vienen en mm/s. Equivalencia acordada
+ * con Diego (2026-08-18): y = Horizontal, z = Vertical, x = Axial.
+ * Cuando se homologue la nomenclatura en Fracttal, esta regla puede retirarse.
+ */
+function ejeDeVibracion(m: Meter): "x" | "y" | "z" | null {
+  const texto = `${m.description ?? ""} ${m.serial ?? ""}`.toLowerCase();
+  const match = texto.match(/\beje\s*[_-]?\s*([xyz])\b/);
+  return match ? (match[1] as "x" | "y" | "z") : null;
+}
+
+/** ¿El medidor es de velocidad? (por unidad, serial tipo CLC_velX, o
+ *  nomenclatura temporal "Eje x/y/z") */
 export function esVelocidad(m: Meter): boolean {
   return (
     m.units_code === "in/s" ||
     m.units_code === "mm/s" ||
-    m.serial.toLowerCase().includes("vel")
+    m.serial.toLowerCase().includes("vel") ||
+    ejeDeVibracion(m) !== null
   );
 }
 
@@ -592,6 +607,11 @@ export function nivelDesdeRango(
 export function posicionDeMedidor(m: Meter): string {
   const match = m.description.match(/\((.+?)\)/);
   if (match) return match[1];
+  // Nomenclatura temporal "Eje x/y/z": y = Horizontal, z = Vertical, x = Axial
+  const eje = ejeDeVibracion(m);
+  if (eje === "y") return "Horizontal";
+  if (eje === "z") return "Vertical";
+  if (eje === "x") return "Axial";
   const s = m.serial.toLowerCase();
   if (s.endsWith("x")) return "X";
   if (s.endsWith("y")) return "Y";

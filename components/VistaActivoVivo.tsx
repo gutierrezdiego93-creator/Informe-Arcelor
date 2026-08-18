@@ -19,6 +19,7 @@ import {
   unidadDeMedidor,
   ordenarPorPosicion,
   ordenarMedidores,
+  posicionDeMedidor,
   type NivelSeveridad,
 } from "@/lib/fracttal";
 
@@ -367,15 +368,16 @@ function IndicadorSensor({
   contenedorRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const meters: Meter[] = grupo?.meters ?? [];
-  // Un punto de vibración clásico (molino) trae velocidad H/V/A [+ temp].
-  // Cualquier otro grupo (voltaje, corriente, desplazamiento, etc. — típico
-  // de activos donde Fracttal no separó los medidores en sub-activos) se
-  // muestra como 1 pastilla por medidor en vez de forzar la rejilla H/V/A/T.
-  const esPuntoDeVibracion = meters.some(esVelocidad);
   const velocidades = ordenarPorPosicion(meters.filter(esVelocidad)).slice(
     0,
     3
   );
+  // Un punto de vibración clásico (molino) trae velocidad H/V/A [+ temp] en
+  // un mismo grupo: solo ahí tiene sentido la rejilla H/V/A/T. Cualquier otro
+  // grupo (voltaje, corriente, o un eje de vibración "desarmado" con un solo
+  // medidor, como los Eje x/y/z de la bomba de lodos) se muestra como 1
+  // pastilla por medidor.
+  const esPuntoDeVibracion = velocidades.length >= 2;
   const temperatura = meters.find((m) => categoriaDeMedidor(m) === "temp");
   const medidoresGenericos = ordenarMedidores(meters);
 
@@ -414,6 +416,11 @@ function IndicadorSensor({
    * potencia, desplazamiento, etc. El color sale del rango min_value/max_value
    * que ya trae Fracttal por medidor; si Fracttal no lo tiene configurado, se
    * muestra sin color (gris) en vez de asumir que está normal.
+   *
+   * Excepción: si el medidor es de velocidad de vibración (ej. los "Eje
+   * x/y/z" desarmados de la bomba de lodos), se muestra convertido a in/s y
+   * con el MISMO semáforo de vibración del molino (0.2 / 0.3 in/s), no con
+   * el rango genérico de Fracttal.
    */
   function datoGenerico(m: Meter): {
     texto: string;
@@ -421,6 +428,13 @@ function IndicadorSensor({
   } {
     const prom = promedios[m.id];
     if (!prom) return { texto: "—", nivel: null };
+    if (esVelocidad(m)) {
+      const enPulgadas = mmsAInsNumero(prom.avg);
+      return {
+        texto: `${enPulgadas} in/s`,
+        nivel: nivelVelocidad(enPulgadas),
+      };
+    }
     const decimales = Math.abs(prom.avg) < 10 ? 2 : 1;
     const valor = Number(prom.avg.toFixed(decimales));
     const unidad = unidadDeMedidor(m);
@@ -525,7 +539,11 @@ function IndicadorSensor({
             {medidoresGenericos.map((m) => (
               <PastillaGenerica
                 key={m.id}
-                etiqueta={m.description}
+                etiqueta={
+                  esVelocidad(m)
+                    ? `${m.description} (${posicionDeMedidor(m)})`
+                    : m.description
+                }
                 dato={datoGenerico(m)}
               />
             ))}

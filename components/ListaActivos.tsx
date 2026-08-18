@@ -9,11 +9,23 @@ import Link from "next/link";
 import type { ActivoMonitoreadoResumen } from "@/lib/db";
 import type { NivelSeveridad } from "@/lib/fracttal";
 
+interface EjeEnRojo {
+  eje: string;
+  valor: number;
+}
+
+interface SensorEnRojo {
+  code: string;
+  label: string;
+  ejes: EjeEnRojo[];
+}
+
 interface SemaforoActivo {
   nivel: NivelSeveridad | null;
   sensoresEvaluados: number;
   sensoresConDato: number;
   porNivel: Record<NivelSeveridad, number>;
+  sensoresEnRojo: SensorEnRojo[];
 }
 
 const SEGUNDOS_AUTOREFRESH = 60;
@@ -182,6 +194,25 @@ export default function ListaActivos({
                   cargando={cargandoSemaforos}
                 />
               </div>
+              {semaforo && (semaforo.sensoresEnRojo?.length ?? 0) > 0 && (
+                <div className="mt-2 rounded-lg border border-[#F7C1C1] bg-[#FCEBEB] p-2">
+                  <p className="text-xs font-medium text-[#791F1F]">
+                    ⚠ {semaforo.sensoresEnRojo.length} sensor(es) en rojo
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {semaforo.sensoresEnRojo.flatMap((s) =>
+                      s.ejes.map((e) => (
+                        <span
+                          key={`${s.code}-${e.eje}`}
+                          className="inline-flex items-center rounded-full bg-[#F09595] px-2 py-0.5 text-[11px] font-medium text-[#501313]"
+                        >
+                          {s.label} · {e.eje} {e.valor}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
               {semaforo && semaforo.sensoresEvaluados > 0 && (
                 <p className="mt-2 text-[11px] text-slate-400">
                   Semáforo: {semaforo.sensoresConDato}/{semaforo.sensoresEvaluados}{" "}

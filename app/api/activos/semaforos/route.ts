@@ -15,12 +15,14 @@ import {
   listarActivosMonitoreados,
   obtenerActivoMonitoreado,
 } from "@/lib/db";
+import type { SensorPosicionado } from "@/lib/db";
 import {
   getSensorsForAsset,
   getMeterReadings,
   esVelocidad,
   mmsAInsNumero,
   nivelVelocidad,
+  posicionDeMedidor,
   type MeterReading,
   type SensorGroup,
   type NivelSeveridad,
@@ -35,6 +37,21 @@ const N_LECTURAS = 10;
 const DIAS_VENTANA = 45;
 const MAX_PAGES = 6; // tope de seguridad (600 lecturas por sensor)
 
+export interface EjeEnRojo {
+  /** Abreviatura del eje: H, V o A. */
+  eje: string;
+  /** Promedio en in/s (ya convertido). */
+  valor: number;
+}
+
+export interface SensorEnRojo {
+  code: string;
+  /** Nombre para mostrar en la cartilla (label del wizard o el code). */
+  label: string;
+  /** Ejes que dispararon el rojo, con su valor en in/s. */
+  ejes: EjeEnRojo[];
+}
+
 export interface SemaforoActivo {
   /** Peor nivel entre los sensores de vibración; null = sin datos. */
   nivel: NivelSeveridad | null;
@@ -44,6 +61,8 @@ export interface SemaforoActivo {
   sensoresConDato: number;
   /** Desglose por color (solo sensores con dato). */
   porNivel: Record<NivelSeveridad, number>;
+  /** Sensores con al menos un eje en rojo, para identificarlos en la cartilla. */
+  sensoresEnRojo: SensorEnRojo[];
 }
 
 const PESO: Record<NivelSeveridad, number> = {
@@ -99,14 +118,27 @@ async function promediosPorMedidor(
   return promedios;
 }
 
+/** Abreviatura de eje para la cartilla: Horizontal→H, Vertical→V, Axial→A. */
+function abreviaturaEje(posicion: string): string {
+  const p = posicion.trim();
+  return p ? p[0].toUpperCase() : "?";
+}
+
+interface EvaluacionSensor {
+  /** Peor nivel entre los ejes con dato; null = sin lecturas en la ventana. */
+  nivel: NivelSeveridad | null;
+  /** Ejes en rojo (≥ 0.3 in/s), con su valor convertido. */
+  ejesRojos: EjeEnRojo[];
+}
+
 /**
- * Color de un sensor: el peor de sus ejes de velocidad H/V/A (misma
- * semaforización que la vista en vivo: mm/s → in/s → nivelVelocidad).
- * null = el sensor no tuvo lecturas en la ventana.
+ * Evalúa un sensor: el peor de sus ejes de velocidad H/V/A (misma
+ * semaforización que la vista en vivo: mm/s → in/s → nivelVelocidad),
+ * más el detalle de qué ejes están en rojo.
  */
-async function nivelDeSensor(grupo: SensorGroup): Promise<NivelSeveridad | null> {
+async function evaluarSensor(grupo: SensorGroup): Promise<EvaluacionSensor> {
   const velocidades = grupo.meters.filter(esVelocidad);
-  if (velocidades.length === 0) return null;
+  if (velocidades.length === 0) return { nivel: null, ejesRojos: [] };
 
   // Sensor "desarmado" (code sintético ACTIVO::idMedidor): las lecturas se
   // piden con el code real del activo dueño + el serial del medidor.
@@ -116,13 +148,21 @@ async function nivelDeSensor(grupo: SensorGroup): Promise<NivelSeveridad | null>
     : await promediosPorMedidor(grupo.code);
 
   let peor: NivelSeveridad | null = null;
+  const ejesRojos: EjeEnRojo[] = [];
   for (const m of velocidades) {
     const avg = promedios.get(m.id);
     if (avg == null) continue;
-    const nivel = nivelVelocidad(mmsAInsNumero(avg));
+    const enPulgadas = mmsAInsNumero(avg);
+    const nivel = nivelVelocidad(enPulgadas);
     if (peor === null || PESO[nivel] > PESO[peor]) peor = nivel;
+    if (nivel === "critico") {
+      ejesRojos.push({
+        eje: abreviaturaEje(posicionDeMedidor(m)),
+        valor: enPulgadas,
+      });
+    }
   }
-  return peor;
+  return { nivel: peor, ejesRojos };
 }
 
 /** Semáforo global de UN activo monitoreado. */
@@ -132,6 +172,7 @@ async function semaforoDeActivo(activoCode: string): Promise<SemaforoActivo> {
     sensoresEvaluados: 0,
     sensoresConDato: 0,
     porNivel: { normal: 0, alerta: 0, critico: 0 },
+    sensoresEnRojo: [],
   };
 
   const [detalle, grupos] = await Promise.all([
@@ -143,15 +184,24 @@ async function semaforoDeActivo(activoCode: string): Promise<SemaforoActivo> {
   const grupoPorCode = new Map(grupos.map((g) => [g.code, g]));
 
   // Solo los sensores POSICIONADOS del activo que además tengan medidores
-  // de velocidad (vibración). Los de energía/otros quedan fuera en paso 1.
-  const gruposVibracion = detalle.sensores
-    .map((s) => grupoPorCode.get(s.sensor_code))
-    .filter((g): g is SensorGroup => !!g && g.meters.some(esVelocidad));
+  // de velocidad (vibración). Los de energía/otros quedan fuera.
+  // Se conserva el sensor posicionado junto a su grupo para poder mostrar
+  // su nombre (sensor_label) en el aviso de rojos de la cartilla.
+  const pares = detalle.sensores
+    .map((sensor) => ({ sensor, grupo: grupoPorCode.get(sensor.sensor_code) }))
+    .filter(
+      (p): p is { sensor: SensorPosicionado; grupo: SensorGroup } =>
+        !!p.grupo && p.grupo.meters.some(esVelocidad)
+    );
 
-  if (gruposVibracion.length === 0) return vacio;
+  if (pares.length === 0) return vacio;
 
-  const niveles = await Promise.all(
-    gruposVibracion.map((g) => nivelDeSensor(g).catch(() => null))
+  const evaluaciones = await Promise.all(
+    pares.map((p) =>
+      evaluarSensor(p.grupo).catch(
+        (): EvaluacionSensor => ({ nivel: null, ejesRojos: [] })
+      )
+    )
   );
 
   const porNivel: Record<NivelSeveridad, number> = {
@@ -160,17 +210,27 @@ async function semaforoDeActivo(activoCode: string): Promise<SemaforoActivo> {
     critico: 0,
   };
   let peor: NivelSeveridad | null = null;
-  for (const n of niveles) {
-    if (n === null) continue;
-    porNivel[n] += 1;
-    if (peor === null || PESO[n] > PESO[peor]) peor = n;
-  }
+  const sensoresEnRojo: SensorEnRojo[] = [];
+  evaluaciones.forEach((ev, i) => {
+    if (ev.nivel === null) return;
+    porNivel[ev.nivel] += 1;
+    if (peor === null || PESO[ev.nivel] > PESO[peor]) peor = ev.nivel;
+    if (ev.ejesRojos.length > 0) {
+      const { sensor } = pares[i];
+      sensoresEnRojo.push({
+        code: sensor.sensor_code,
+        label: sensor.sensor_label || sensor.sensor_code,
+        ejes: ev.ejesRojos,
+      });
+    }
+  });
 
   return {
     nivel: peor,
-    sensoresEvaluados: gruposVibracion.length,
-    sensoresConDato: niveles.filter((n) => n !== null).length,
+    sensoresEvaluados: pares.length,
+    sensoresConDato: evaluaciones.filter((ev) => ev.nivel !== null).length,
     porNivel,
+    sensoresEnRojo,
   };
 }
 
@@ -192,6 +252,7 @@ export async function GET() {
               sensoresEvaluados: 0,
               sensoresConDato: 0,
               porNivel: { normal: 0, alerta: 0, critico: 0 },
+              sensoresEnRojo: [],
             } satisfies SemaforoActivo,
           ] as const;
         }

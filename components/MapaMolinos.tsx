@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { SlotMapa } from "@/lib/db";
 import type { Asset, SensorGroup, NivelSeveridad } from "@/lib/fracttal";
 import type { SemaforoActivo } from "@/lib/semaforo";
+import { limpiarNombre } from "@/lib/nombres";
 
 const PLANO = "/molino-vista-superior.jpg";
 const SEGUNDOS_AUTOREFRESH = 60;
@@ -216,7 +217,10 @@ export default function MapaMolinos({
     setSlotSel(slot);
     setSensorArmado(null);
     if (s?.activo_code) {
-      setActivoSel({ code: s.activo_code, nombre: s.activo_nombre ?? s.activo_code });
+      setActivoSel({
+        code: s.activo_code,
+        nombre: limpiarNombre(s.activo_nombre) || s.activo_code,
+      });
       setPuntos(
         s.sensores.map((x) => ({
           sensorCode: x.sensor_code,
@@ -237,7 +241,7 @@ export default function MapaMolinos({
   }
 
   function elegirActivo(a: Asset) {
-    const nombre = a.field_1 ?? a.description;
+    const nombre = limpiarNombre(a.field_1 ?? a.description) || a.code;
     setActivoSel({ code: a.code, nombre });
     setPuntos([]);
     setSensorArmado(null);
@@ -451,8 +455,8 @@ export default function MapaMolinos({
               }));
           const sinActivo = enEdicion ? !activoSel : !s.activo_code;
           const nombre = enEdicion
-            ? activoSel?.nombre ?? "Sin activo asignado"
-            : s.activo_nombre ?? "Sin activo asignado";
+            ? limpiarNombre(activoSel?.nombre) || "Sin activo asignado"
+            : limpiarNombre(s.activo_nombre) || "Sin activo asignado";
           // El nombre lleva a la vista en vivo del activo (todas sus medidas),
           // pero solo si ese activo ya está configurado como monitoreado: si
           // no, ese enlace terminaría en la pantalla de "sin configurar".
@@ -528,7 +532,7 @@ export default function MapaMolinos({
                     <button
                       key={p.code}
                       type="button"
-                      title={p.label}
+                      title={limpiarNombre(p.label) || p.code}
                       onClick={(e) => {
                         if (!enEdicion) return;
                         e.stopPropagation();
@@ -551,7 +555,7 @@ export default function MapaMolinos({
                           enEdicion ? "" : "hidden group-hover:block"
                         }`}
                       >
-                        {p.label}
+                        {limpiarNombre(p.label) || p.code}
                       </span>
                     </button>
                   );
@@ -657,7 +661,7 @@ export default function MapaMolinos({
                         className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
                       >
                         <span className="font-medium">
-                          {a.field_1 ?? a.description}
+                          {limpiarNombre(a.field_1 ?? a.description)}
                         </span>
                         <span className="ml-2 text-xs text-slate-500">{a.code}</span>
                       </button>
@@ -685,7 +689,7 @@ export default function MapaMolinos({
                         onClick={() => copiarPosicionesDe(o.slot)}
                         className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] hover:bg-slate-50"
                       >
-                        {o.activo_nombre ?? `Posición ${o.slot}`}
+                        {limpiarNombre(o.activo_nombre) || `Posición ${o.slot}`}
                       </button>
                     ))}
                   </div>
@@ -722,7 +726,7 @@ export default function MapaMolinos({
                         <span key={g.code} className="inline-flex items-center">
                           <button
                             onClick={() => setSensorArmado(armado ? null : g.code)}
-                            title={g.description}
+                            title={limpiarNombre(g.description) || g.code}
                             className={`rounded-l-lg border px-2.5 py-1 text-xs transition ${
                               armado
                                 ? "border-brand bg-brand text-white"
@@ -731,7 +735,7 @@ export default function MapaMolinos({
                                   : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                             } ${ya ? "" : "rounded-r-lg"}`}
                           >
-                            {g.description || g.code}
+                            {limpiarNombre(g.description) || g.code}
                             {armado && " · clic en el plano"}
                           </button>
                           {ya && (

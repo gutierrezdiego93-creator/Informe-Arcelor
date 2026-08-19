@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Asset, SensorGroup } from "@/lib/fracttal";
+import { limpiarNombre } from "@/lib/nombres";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
 
@@ -230,7 +231,8 @@ export default function NuevoActivoMonitoreado() {
         </h2>
         {activoSel && paso > 1 && (
           <p className="mt-1 text-sm text-slate-600">
-            {activoSel.field_1 ?? activoSel.description} ({activoSel.code})
+            {limpiarNombre(activoSel.field_1 ?? activoSel.description)} (
+            {activoSel.code})
           </p>
         )}
       </div>
@@ -303,7 +305,7 @@ export default function NuevoActivoMonitoreado() {
                     >
                       <span className="min-w-0">
                         <span className="font-medium">
-                          {a.field_1 ?? a.description}
+                          {limpiarNombre(a.field_1 ?? a.description)}
                         </span>
                         <span className="ml-2 text-xs text-slate-500">
                           {a.code}
@@ -459,7 +461,7 @@ export default function NuevoActivoMonitoreado() {
                         ? "h-8 w-8 bg-amber-500"
                         : "h-7 w-7 bg-brand"
                     }`}
-                    title={`${g.code} · ${g.description}`}
+                    title={`${g.code} · ${limpiarNombre(g.description)}`}
                   >
                     {g.code.slice(0, 2)}
                   </button>
@@ -490,7 +492,7 @@ export default function NuevoActivoMonitoreado() {
                           >
                             <span className="font-medium">{g.code}</span>{" "}
                             <span className="text-xs text-slate-500">
-                              {g.description}
+                              {limpiarNombre(g.description)}
                             </span>
                           </button>
                         </li>
@@ -513,7 +515,7 @@ export default function NuevoActivoMonitoreado() {
                           <span>
                             <span className="font-medium">{g.code}</span>{" "}
                             <span className="text-xs text-slate-500">
-                              {g.description}
+                              {limpiarNombre(g.description)}
                             </span>
                           </span>
                           <button

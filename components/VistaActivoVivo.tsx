@@ -22,6 +22,7 @@ import {
   posicionDeMedidor,
   type NivelSeveridad,
 } from "@/lib/fracttal";
+import { limpiarNombre } from "@/lib/nombres";
 
 /** Colores de las pastillas de valor según nivel de severidad. */
 const CLASE_NIVEL: Record<NivelSeveridad, string> = {
@@ -221,7 +222,7 @@ export default function VistaActivoVivo({
             ← Activos monitoreados
           </Link>
           <h2 className="text-xl font-semibold">
-            {detalle.activo_nombre ?? detalle.activo_code}
+            {limpiarNombre(detalle.activo_nombre) || detalle.activo_code}
           </h2>
           <p className="text-xs text-slate-500">
             {detalle.activo_code} · {detalle.sensores.length} sensor(es)
@@ -298,7 +299,7 @@ export default function VistaActivoVivo({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={detalle.imagen_url}
-            alt={detalle.activo_nombre ?? detalle.activo_code}
+            alt={limpiarNombre(detalle.activo_nombre) || detalle.activo_code}
             className="block w-full select-none rounded-xl"
             draggable={false}
           />
@@ -541,8 +542,8 @@ function IndicadorSensor({
                 key={m.id}
                 etiqueta={
                   esVelocidad(m)
-                    ? `${m.description} (${posicionDeMedidor(m)})`
-                    : m.description
+                    ? `${limpiarNombre(m.description)} (${posicionDeMedidor(m)})`
+                    : limpiarNombre(m.description)
                 }
                 dato={datoGenerico(m)}
               />

@@ -3,6 +3,7 @@
 // Lista de informes anteriores (Home) con opción de eliminar.
 import { useState } from "react";
 import type { InformeResumen } from "@/lib/db";
+import { limpiarNombre } from "@/lib/nombres";
 
 const COLOR_NIVEL: Record<string, string> = {
   NORMAL: "bg-green-100 text-green-700",
@@ -55,7 +56,9 @@ export default function ListaInformes({
         >
           <div>
             <p className="text-sm font-medium text-slate-800">
-              {inf.activo_nombre ?? inf.activo_code ?? "Activo sin nombre"}{" "}
+              {limpiarNombre(inf.activo_nombre) ||
+                inf.activo_code ||
+                "Activo sin nombre"}{" "}
               <span className="font-normal text-slate-500">
                 · Semana {inf.semana}
               </span>

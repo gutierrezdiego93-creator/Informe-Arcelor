@@ -20,6 +20,7 @@ import type {
   OtroValor,
 } from "@/components/InformePDF";
 import type { ActivoMonitoreadoDetalle } from "@/lib/db";
+import { limpiarNombre } from "@/lib/nombres";
 import RichTextEditor from "@/components/RichTextEditor";
 
 type Estado = "idle" | "cargando" | "ok" | "error";
@@ -410,7 +411,7 @@ export default function NuevoInforme() {
       )
       .map((sp) => ({
         sensorCode: sp.sensor_code,
-        sensorLabel: sp.sensor_label ?? sp.sensor_code,
+        sensorLabel: limpiarNombre(sp.sensor_label) || sp.sensor_code,
         posX: sp.pos_x,
         posY: sp.pos_y,
       }));
@@ -442,7 +443,7 @@ export default function NuevoInforme() {
         if (nivel && pesoNivel[nivel] > pesoNivel[peor]) peor = nivel;
         filasVelocidad.push({
           sensor: g.code,
-          sensorDesc: g.description,
+          sensorDesc: limpiarNombre(g.description),
           posicion: posicionDeMedidor(m),
           valor: isNaN(v) ? null : v,
           nivel,
@@ -454,7 +455,7 @@ export default function NuevoInforme() {
         if (esVelocidad(m) || excluidos.has(m.serial)) continue;
         otrosValores.push({
           sensor: g.code,
-          medidor: m.description,
+          medidor: limpiarNombre(m.description),
           valor: valores[m.serial] ?? "",
           unidad: m.units_code,
         });
@@ -463,7 +464,7 @@ export default function NuevoInforme() {
 
     return {
       activo: {
-        nombre: activoSel?.field_1 ?? activoSel?.description ?? "",
+        nombre: limpiarNombre(activoSel?.field_1 ?? activoSel?.description),
         codigo: activoSel?.code ?? "",
         fabricante: activoSel?.field_2 ?? undefined,
         modelo: activoSel?.field_3 ?? undefined,
@@ -585,7 +586,8 @@ export default function NuevoInforme() {
       </h2>
       {activoSel && paso > 1 && (
         <p className="mt-1 text-sm text-slate-600">
-          {activoSel.field_1 ?? activoSel.description} ({activoSel.code}) ·{" "}
+          {limpiarNombre(activoSel.field_1 ?? activoSel.description)} (
+          {activoSel.code}) ·{" "}
           {gruposSeleccionados.length} sensor(es)
         </p>
       )}
@@ -667,7 +669,7 @@ export default function NuevoInforme() {
                     >
                       <span className="min-w-0">
                         <span className="font-medium">
-                          {a.field_1 ?? a.description}
+                          {limpiarNombre(a.field_1 ?? a.description)}
                         </span>
                         <span className="ml-2 text-xs text-slate-500">
                           {a.code}
@@ -757,7 +759,7 @@ export default function NuevoInforme() {
                           <p className="font-medium">
                             {g.code}{" "}
                             <span className="font-normal text-slate-500">
-                              · {g.description}
+                              · {limpiarNombre(g.description)}
                             </span>
                           </p>
                           <p className="mt-1 text-xs text-slate-500">
@@ -989,7 +991,7 @@ export default function NuevoInforme() {
                   <div>
                     <span className="font-semibold">{g.code}</span>{" "}
                     <span className="text-sm text-slate-500">
-                      · {g.description}
+                      · {limpiarNombre(g.description)}
                     </span>
                     <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600">
                       {incluidosGrupo}/{g.meters.length} en informe
@@ -1030,7 +1032,9 @@ export default function NuevoInforme() {
                               className="h-4 w-4 accent-[#2929ff]"
                             />
                           </td>
-                          <td className="px-4 py-2">{m.description}</td>
+                          <td className="px-4 py-2">
+                            {limpiarNombre(m.description)}
+                          </td>
                           <td className="px-4 py-2">
                             <input
                               type="number"
@@ -1165,7 +1169,7 @@ export default function NuevoInforme() {
                           >
                             {g.code}
                             <span className="block text-xs font-normal text-slate-500">
-                              {g.description}
+                              {limpiarNombre(g.description)}
                             </span>
                           </td>
                         )}

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { ActivoMonitoreadoResumen } from "@/lib/db";
 import type { NivelSeveridad } from "@/lib/fracttal";
+import { limpiarNombre } from "@/lib/nombres";
 
 interface EjeEnRojo {
   eje: string;
@@ -29,6 +30,18 @@ interface SemaforoActivo {
 }
 
 const SEGUNDOS_AUTOREFRESH = 60;
+
+// Orden fijo de los ejes dentro de un chip, para que dos cartillas siempre se
+// lean igual (Fracttal puede devolver los medidores en cualquier orden).
+const ORDEN_EJE = ["H", "V", "A"];
+
+function ordenarEjes(ejes: EjeEnRojo[]): EjeEnRojo[] {
+  const peso = (eje: string) => {
+    const i = ORDEN_EJE.indexOf(eje.toUpperCase());
+    return i === -1 ? ORDEN_EJE.length : i;
+  };
+  return [...ejes].sort((a, b) => peso(a.eje) - peso(b.eje));
+}
 
 // Mismos colores de severidad que la vista en vivo.
 const PASTILLA: Record<NivelSeveridad, { clase: string; punto: string; texto: string }> = {
@@ -170,7 +183,7 @@ export default function ListaActivos({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={a.imagen_url}
-                  alt={a.activo_nombre ?? a.activo_code}
+                  alt={limpiarNombre(a.activo_nombre) || a.activo_code}
                   className="h-40 w-full bg-slate-100 object-cover"
                 />
               ) : (
@@ -183,7 +196,7 @@ export default function ListaActivos({
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-slate-800">
-                    {a.activo_nombre ?? a.activo_code}
+                    {limpiarNombre(a.activo_nombre) || a.activo_code}
                   </p>
                   <p className="text-xs text-slate-500">
                     {a.activo_code} · {a.num_sensores} sensor(es)
@@ -199,17 +212,25 @@ export default function ListaActivos({
                   <p className="text-xs font-medium text-[#791F1F]">
                     ⚠ {semaforo.sensoresEnRojo.length} sensor(es) en rojo
                   </p>
+                  {/* Un chip por SENSOR con sus ejes en rojo dentro: las 3
+                      medidas H/V/A pertenecen al mismo punto físico, así que
+                      no deben verse como sensores distintos. */}
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {semaforo.sensoresEnRojo.flatMap((s) =>
-                      s.ejes.map((e) => (
-                        <span
-                          key={`${s.code}-${e.eje}`}
-                          className="inline-flex items-center rounded-full bg-[#F09595] px-2 py-0.5 text-[11px] font-medium text-[#501313]"
-                        >
-                          {s.label} · {e.eje} {e.valor}
+                    {semaforo.sensoresEnRojo.map((s) => (
+                      <span
+                        key={s.code}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#F09595] px-2 py-0.5 text-[11px] text-[#501313]"
+                      >
+                        <span className="font-semibold">
+                          {limpiarNombre(s.label) || s.code}
                         </span>
-                      ))
-                    )}
+                        <span>
+                          {ordenarEjes(s.ejes)
+                            .map((e) => `${e.eje} ${e.valor}`)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}

@@ -12,6 +12,7 @@
 // ÚNICAMENTE los sensores asociados a ese activo (misma llamada acotada por
 // code que usa el wizard) → clic en el sensor y clic en el plano.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import type { SlotMapa } from "@/lib/db";
 import type { Asset, SensorGroup, NivelSeveridad } from "@/lib/fracttal";
 import type { SemaforoActivo } from "@/lib/semaforo";
@@ -19,11 +20,29 @@ import type { SemaforoActivo } from "@/lib/semaforo";
 const PLANO = "/molino-vista-superior.jpg";
 const SEGUNDOS_AUTOREFRESH = 60;
 
-const COLOR_PUNTO: Record<NivelSeveridad, string> = {
-  normal: "#3B6D11",
-  alerta: "#EF9F27",
-  critico: "#E24B4A",
+// El plano es un dibujo de línea fina sobre blanco: un punto pequeño de color
+// plano se pierde. Cada punto lleva borde blanco + anillo oscuro del mismo
+// color (contraste contra el trazo) + un halo suave que lo hace visible de un
+// vistazo aunque la tarjeta esté reducida.
+type ClavePunto = NivelSeveridad | "sinDatos";
+
+const ESTILO_PUNTO: Record<
+  ClavePunto,
+  { fondo: string; anillo: string; halo: string }
+> = {
+  normal: { fondo: "#639922", anillo: "#173404", halo: "rgba(99,153,34,0.30)" },
+  alerta: { fondo: "#EF9F27", anillo: "#412402", halo: "rgba(239,159,39,0.32)" },
+  critico: { fondo: "#E24B4A", anillo: "#501313", halo: "rgba(226,75,74,0.34)" },
+  sinDatos: {
+    fondo: "#94A3B8",
+    anillo: "#1E293B",
+    halo: "rgba(148,163,184,0.30)",
+  },
 };
+
+function sombraPunto(e: { anillo: string; halo: string }): string {
+  return `0 0 0 2px ${e.anillo}, 0 0 0 7px ${e.halo}, 0 1px 4px rgba(15,23,42,0.45)`;
+}
 
 const PASTILLA: Record<NivelSeveridad, { clase: string; punto: string; texto: string }> = {
   normal: { clase: "bg-[#C0DD97] text-[#173404]", punto: "#3B6D11", texto: "NORMAL" },
@@ -73,10 +92,18 @@ function Pastilla({
 
 export default function MapaMolinos({
   slotsIniciales,
+  codigosMonitoreados,
 }: {
   slotsIniciales: SlotMapa[];
+  /** Activos ya configurados en "Activos monitoreados": solo esos pueden
+   *  abrirse desde el mapa para ver todas sus medidas. */
+  codigosMonitoreados: string[];
 }) {
   const [slots, setSlots] = useState(slotsIniciales);
+  const monitoreados = useMemo(
+    () => new Set(codigosMonitoreados),
+    [codigosMonitoreados]
+  );
   const [semaforos, setSemaforos] = useState<Record<string, SemaforoActivo>>({});
   const [cargandoSemaforos, setCargandoSemaforos] = useState(true);
   const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null);
@@ -345,22 +372,25 @@ export default function MapaMolinos({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_PUNTO.normal }} />
-            Normal
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_PUNTO.alerta }} />
-            Alerta
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLOR_PUNTO.critico }} />
-            Crítico
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
-            Sin datos
-          </span>
+          {(
+            [
+              ["normal", "Normal"],
+              ["alerta", "Alerta"],
+              ["critico", "Crítico"],
+              ["sinDatos", "Sin datos"],
+            ] as [ClavePunto, string][]
+          ).map(([clave, texto]) => (
+            <span key={clave} className="inline-flex items-center gap-1.5">
+              <span
+                className="h-3 w-3 rounded-full border border-white"
+                style={{
+                  backgroundColor: ESTILO_PUNTO[clave].fondo,
+                  boxShadow: `0 0 0 1.5px ${ESTILO_PUNTO[clave].anillo}`,
+                }}
+              />
+              {texto}
+            </span>
+          ))}
           {haceSegundos !== null && !editando && (
             <span className="text-slate-400">· actualizado hace {haceSegundos} s</span>
           )}
@@ -423,6 +453,13 @@ export default function MapaMolinos({
           const nombre = enEdicion
             ? activoSel?.nombre ?? "Sin activo asignado"
             : s.activo_nombre ?? "Sin activo asignado";
+          // El nombre lleva a la vista en vivo del activo (todas sus medidas),
+          // pero solo si ese activo ya está configurado como monitoreado: si
+          // no, ese enlace terminaría en la pantalla de "sin configurar".
+          const puedeAbrirDetalle =
+            !editando &&
+            !!s.activo_code &&
+            monitoreados.has(s.activo_code);
 
           return (
             <div
@@ -433,14 +470,27 @@ export default function MapaMolinos({
             >
               <div className="flex items-start justify-between gap-2 p-3">
                 <div className="min-w-0">
-                  <p
-                    className={`truncate text-sm font-medium ${
-                      sinActivo ? "text-slate-400" : "text-slate-800"
-                    }`}
-                    title={nombre}
-                  >
-                    {nombre}
-                  </p>
+                  {puedeAbrirDetalle ? (
+                    <Link
+                      href={`/activos/${encodeURIComponent(s.activo_code!)}`}
+                      title={`Ver ${nombre} en Activos monitoreados`}
+                      className="flex min-w-0 items-center gap-1 text-sm font-medium text-slate-800 hover:text-brand hover:underline"
+                    >
+                      <span className="truncate">{nombre}</span>
+                      <span aria-hidden className="shrink-0 text-brand">
+                        ↗
+                      </span>
+                    </Link>
+                  ) : (
+                    <p
+                      className={`truncate text-sm font-medium ${
+                        sinActivo ? "text-slate-400" : "text-slate-800"
+                      }`}
+                      title={nombre}
+                    >
+                      {nombre}
+                    </p>
+                  )}
                   <p className="text-[11px] text-slate-500">
                     {enEdicion
                       ? activoSel?.code ?? `Posición ${s.slot}`
@@ -472,7 +522,8 @@ export default function MapaMolinos({
                 />
                 {puntosAMostrar.map((p) => {
                   const nivel = enEdicion ? null : nivelPorSensor.get(p.code) ?? null;
-                  const color = nivel ? COLOR_PUNTO[nivel] : "#94a3b8";
+                  const estilo = ESTILO_PUNTO[nivel ?? "sinDatos"];
+                  const armado = enEdicion && sensorArmado === p.code;
                   return (
                     <button
                       key={p.code}
@@ -487,12 +538,13 @@ export default function MapaMolinos({
                       className="group absolute -translate-x-1/2 -translate-y-1/2"
                     >
                       <span
-                        className={`block rounded-full border-2 border-white shadow ${
-                          enEdicion && sensorArmado === p.code
-                            ? "h-4 w-4 ring-2 ring-brand"
-                            : "h-3 w-3"
+                        className={`block rounded-full border-2 border-white ${
+                          armado ? "h-6 w-6" : "h-5 w-5"
                         }`}
-                        style={{ backgroundColor: color }}
+                        style={{
+                          backgroundColor: estilo.fondo,
+                          boxShadow: sombraPunto(estilo),
+                        }}
                       />
                       <span
                         className={`pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-slate-900/90 px-1.5 py-0.5 text-[10px] font-medium text-white ${

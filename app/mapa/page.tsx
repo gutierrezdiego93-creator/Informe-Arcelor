@@ -1,4 +1,9 @@
-import { listarMapa, SLOTS_MAPA, type SlotMapa } from "@/lib/db";
+import {
+  listarMapa,
+  listarActivosMonitoreados,
+  SLOTS_MAPA,
+  type SlotMapa,
+} from "@/lib/db";
 import MapaMolinos from "@/components/MapaMolinos";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +17,10 @@ const SLOTS_VACIOS: SlotMapa[] = Array.from({ length: SLOTS_MAPA }, (_, i) => ({
 }));
 
 export default async function MapaPage() {
-  const slots = await listarMapa().catch(() => SLOTS_VACIOS);
+  const [slots, monitoreados] = await Promise.all([
+    listarMapa().catch(() => SLOTS_VACIOS),
+    listarActivosMonitoreados().catch(() => []),
+  ]);
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-slate-200 bg-white p-6">
@@ -26,7 +34,10 @@ export default async function MapaPage() {
         </p>
       </section>
 
-      <MapaMolinos slotsIniciales={slots} />
+      <MapaMolinos
+        slotsIniciales={slots}
+        codigosMonitoreados={monitoreados.map((a) => a.activo_code)}
+      />
     </div>
   );
 }
